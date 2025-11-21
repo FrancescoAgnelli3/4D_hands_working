@@ -1,0 +1,16 @@
+
+/SFgDNet/examples/*
+/SFgDNet/out/*
+/SFgDNet/wandb/*
+
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.json
+*.csv
+*.pth
+*.txt
+*.pt
+*.ipynb
+*.png
