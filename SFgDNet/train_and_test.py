@@ -291,6 +291,7 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
     simlpe = None
     sfgdnet_model = None
     sfgdnet_try_model = None
+    params: List[torch.nn.Parameter] = []
     eqmotion_model = None
     trajdep = None
     pgbig_model = None
@@ -314,6 +315,7 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
         forecaster_cls,
         label: str,
     ) -> torch.nn.Module:
+        nonlocal params, params_count, optimizer
         slow_layers = config.get("simlpe_slow_layers")
         fast_layers = config.get("simlpe_fast_layers")
         force_mlp_padding_cfg = config.get(f"{prefix}_force_mlp_padding")
@@ -371,7 +373,6 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
         if bool(config.get(f"{prefix}_freeze_gate", False)):
             model_instance.freeze_frequency_gate(True)
         params = list(model_instance.parameters())
-        nonlocal params_count, optimizer
         optimizer = torch.optim.Adam(params, lr=learning_rate)
         params_count = _print_model_parameters(model_instance, title=label)
         return model_instance

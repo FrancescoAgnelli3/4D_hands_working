@@ -83,7 +83,7 @@ def _build_adjacency_matrix(node_count: int, hand_groups: Tuple[dict, ...]) -> T
 DATASET_METADATA = {
     "assembly": {
         "dataset_cls": AssemblyDataset,
-        "default_dir": "/mnt/turing-datasets/AssemblyHands/assembly101-download-scripts/data_our/data_our",
+        "default_dir": "/mnt/turing-datasets/AssemblyHands/assembly101-download-scripts/data_our/",
         "default_action_filter": "pick_up_screwd",
         "hand_groups": ASSEMBLY_HAND_GROUPS,
         "node_count": 42,

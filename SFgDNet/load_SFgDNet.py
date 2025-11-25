@@ -14,10 +14,11 @@ import os
 
 from data import get_dataset_metadata
 from models.SFgDNet import SFgDNetConfig, SFgDNetForecaster
+from models.sfgdnet_try import SFgDNetTryConfig, SFgDNetTryForecaster
 
 
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "examples" / "models"
-MODEL_FILE_TEMPLATE = "SFgDNet_{dataset}_{action}.pt"
+MODEL_FILE_TEMPLATE = "{model}_{dataset}_{action}.pt"
 
 
 def parse_tag(tag: str | None) -> dict[str, str | None]:
@@ -65,28 +66,41 @@ def coerce_float(value: Any, default: float) -> float:
     return default if not val or val.lower() in {"none", "null"} else float(val)
 
 
-def find_available_actions(model_dir: Path, dataset: str) -> Iterable[str]:
-    prefix = f"SFgDNet_{dataset}_"
+def find_available_actions(model_dir: Path, model: str, dataset: str) -> Iterable[str]:
+    prefix = f"{model}_{dataset}_"
     for candidate in sorted(model_dir.glob(f"{prefix}*.pt")):
         stem = candidate.stem
         if stem.startswith(prefix):
             yield stem[len(prefix) :]
 
 
-def resolve_checkpoint_path(model_dir: Path, dataset: str, action: str) -> Path:
-    path = model_dir / MODEL_FILE_TEMPLATE.format(dataset=dataset, action=action)
+def resolve_checkpoint_path(model_dir: Path, model: str, dataset: str, action: str) -> Path:
+    path = model_dir / MODEL_FILE_TEMPLATE.format(model=model, dataset=dataset, action=action)
     if path.exists():
         return path
-    available = ", ".join(find_available_actions(model_dir, dataset))
+    available = ", ".join(find_available_actions(model_dir, model, dataset))
     raise FileNotFoundError(
         f"Checkpoint for action '{action}' not found in {model_dir}. "
         f"Available actions: {available or '<none>'}"
     )
 
 
-def build_config(dataset: str, parsed_tag: dict[str, str | None]) -> SFgDNetConfig:
+@dataclass(frozen=True)
+class ModelComponents:
+    config_cls: type
+    forecaster_cls: type
+
+
+def resolve_model_components(model_name: str) -> ModelComponents:
+    normalized = str(model_name).lower()
+    if normalized == "sfgdnet_try":
+        return ModelComponents(SFgDNetTryConfig, SFgDNetTryForecaster)
+    return ModelComponents(SFgDNetConfig, SFgDNetForecaster)
+
+
+def build_config(dataset: str, parsed_tag: dict[str, str | None], config_cls: type) -> Any:
     metadata = get_dataset_metadata(dataset)
-    return SFgDNetConfig(
+    return config_cls(
         input_length=coerce_int(parsed_tag.get("in"), 70),
         pred_length=coerce_int(parsed_tag.get("out"), 30),
         num_nodes=int(metadata["node_count"]),
@@ -100,8 +114,8 @@ def build_config(dataset: str, parsed_tag: dict[str, str | None]) -> SFgDNetConf
     )
 
 
-def list_actions(model_dir: Path, dataset: str, explicit: Sequence[str] | None) -> list[str]:
-    available = list(find_available_actions(model_dir, dataset))
+def list_actions(model_dir: Path, model: str, dataset: str, explicit: Sequence[str] | None) -> list[str]:
+    available = list(find_available_actions(model_dir, model, dataset))
     if explicit is None:
         if not available:
             raise ValueError(f"No checkpoints found in {model_dir} for dataset '{dataset}'.")
@@ -117,36 +131,43 @@ def list_actions(model_dir: Path, dataset: str, explicit: Sequence[str] | None) 
 @dataclass
 class ActionGateSummary:
     action: str
-    center_slow: float
-    center_fast: float
     gate_slow: torch.Tensor
     gate_fast: torch.Tensor
 
 
-def inspect_checkpoint(model_dir: Path, dataset: str, action: str, mode: str) -> ActionGateSummary:
-    checkpoint_path = resolve_checkpoint_path(model_dir, dataset, action)
+def inspect_checkpoint(
+    model: str,
+    model_dir: Path,
+    dataset: str,
+    action: str,
+    mode: str,
+    components: ModelComponents,
+) -> ActionGateSummary:
+    checkpoint_path = resolve_checkpoint_path(model_dir, model, dataset, action)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     metadata = checkpoint.get("metadata", {})
     parsed_tag = parse_tag(metadata.get("tag"))
-    cfg = build_config(dataset, parsed_tag)
+    cfg = build_config(dataset, parsed_tag, components.config_cls)
 
-    model = SFgDNetForecaster(cfg)
+    forecaster = components.forecaster_cls(cfg)
     state_dict = checkpoint.get("best_model_state", checkpoint)
     if isinstance(state_dict, dict) and "SFgDNet" in state_dict:
         state_dict = state_dict["SFgDNet"]
-    model.load_state_dict(state_dict)
-    model.eval()
+    if isinstance(state_dict, dict) and "sfgdnet_try" in state_dict:
+        state_dict = state_dict["sfgdnet_try"]
+    forecaster.load_state_dict(state_dict)
+    forecaster.eval()
 
     dummy_history = torch.zeros(1, cfg.input_length, cfg.num_nodes, 3, dtype=torch.float32)
     with torch.no_grad():
-        _ = model(dummy_history)
+        _ = forecaster(dummy_history)
 
     if mode == "gate":
-        gate_slow = model.last_gate_slow
-        gate_fast = model.last_gate_fast
+        gate_slow = forecaster.last_gate_slow
+        gate_fast = forecaster.last_gate_fast
     if mode == "mask":
-        gate_slow = model.last_mask
-        gate_fast = 1-model.last_mask
+        gate_slow = forecaster.last_mask
+        gate_fast = 1 - forecaster.last_mask
     if gate_slow is None or gate_fast is None:
         raise RuntimeError(f"Gates were not populated for action '{action}'.")
 
@@ -155,18 +176,10 @@ def inspect_checkpoint(model_dir: Path, dataset: str, action: str, mode: str) ->
 
     return ActionGateSummary(
         action=action,
-        center_slow=float(model.center_slow.detach().item()),
-        center_fast=float(model.center_fast.detach().item()),
         gate_slow=gate_slow,
         gate_fast=gate_fast,
     )
 
-
-def _center_to_index(center: float, length: int) -> float:
-    # If centroid in [0,1], map to [0, length-1]; else assume it's already an index.
-    if 0.0 <= center <= 1.0:
-        return center * (length - 1)
-    return center
 
 def plot_gates(summaries: Sequence[ActionGateSummary], output: Path, mode: str) -> None:
     with plt.rc_context({"font.size": plt.rcParams["font.size"] * 3}):
@@ -188,14 +201,7 @@ def plot_gates(summaries: Sequence[ActionGateSummary], output: Path, mode: str) 
             linewidth = 3.5
 
             slow_line = axes[0].plot(xs_slow, summary.gate_slow.numpy(), label=summary.action, linewidth=linewidth)[0]
-            if mode == "gate":
-                x0 = _center_to_index(summary.center_slow, n_slow)
-                axes[0].plot([x0, x0], [0, 1], linestyle=":", linewidth=linewidth, color=slow_line.get_color())
-
             fast_line = axes[1].plot(xs_fast, summary.gate_fast.numpy(), label=summary.action, linewidth=linewidth)[0]
-            if mode == "gate":
-                x1 = _center_to_index(summary.center_fast, n_fast)
-                axes[1].plot([x1, x1], [0, 1], linestyle=":", linewidth=linewidth, color=fast_line.get_color())
 
         for ax in axes:
             if mode == "gate":
@@ -223,15 +229,8 @@ def plot_mean_sigmoid(summaries: Sequence[ActionGateSummary], output: Path) -> N
 
         trimmed = torch.stack([g[:min_len] for g in gates])
 
-        centers = []
-        for summary, gate in zip(summaries, gates):
-            center = getattr(summary, attr_center)
-            idx = _center_to_index(center, gate.numel())
-            idx = max(0.0, min(idx, min_len - 1))
-            centers.append(idx)
 
-        mean_center = sum(centers) / len(centers)
-        return trimmed.mean(0), min_len, mean_center
+        return trimmed.mean(0), min_len
 
     mean_slow, slow_len, nu_s = _calculate_stats("gate_slow", "center_slow")
     mean_fast, fast_len, nu_f = _calculate_stats("gate_fast", "center_fast")
@@ -284,8 +283,12 @@ def main() -> None:
         help="Dataset prefix used when naming checkpoints (default: assembly).",
     )
     parser.add_argument(
+        "--model",
+        default="sfgdnet_try",
+        help="Model prefix used when naming checkpoints (default: sfgdnet_try).",
+    )
+    parser.add_argument(
         "--model-dir",
-        "-m",
         type=Path,
         default=DEFAULT_MODEL_DIR,
         help=f"Directory with SFgDNet checkpoints (default: {DEFAULT_MODEL_DIR}).",
@@ -316,17 +319,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    components = resolve_model_components(args.model)
     requested = None if not args.actions else [act.strip() for act in args.actions if act.strip()]
-    actions = list_actions(args.model_dir, args.dataset, requested)
+    actions = list_actions(args.model_dir, args.model, args.dataset, requested)
 
     summaries: list[ActionGateSummary] = []
     for action in actions:
         print(f"Loading action {action}...")
-        summary = inspect_checkpoint(args.model_dir, args.dataset, action, args.mode)
+        summary = inspect_checkpoint(
+            args.model,
+            args.model_dir,
+            args.dataset,
+            action,
+            args.mode,
+            components,
+        )
         summaries.append(summary)
         print(
-            f"Action {action}: center_slow={summary.center_slow:.4f}, center_fast={summary.center_fast:.4f}, "
-            f"dct_len={summary.gate_slow.numel()}"
+            f"Action {action}: dct_len={summary.gate_slow.numel()}"
         )
 
     plot_output = str(args.plot_output).split(".")[0] + args.mode
@@ -335,8 +345,8 @@ def main() -> None:
 
     plot_gates(summaries, plot_output, args.mode)
     print(f"Saved gate visualization to {plot_output}")
-    plot_mean_sigmoid(summaries, mean_plot_output)
-    print(f"Saved mean sigmoid visualization to {mean_plot_output}")
+    # plot_mean_sigmoid(summaries, mean_plot_output)
+    # print(f"Saved mean sigmoid visualization to {mean_plot_output}")
 
 
 if __name__ == "__main__":
