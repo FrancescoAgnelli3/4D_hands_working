@@ -417,14 +417,14 @@ class SFgDNetTryForecaster(nn.Module):
 
         # Spline gate parameters
         gate_degree = max(0, int(cfg.gate_basis_degree))
-        gate_basis = cfg.gate_basis_size if cfg.gate_basis_size is not None else min(K, 32)
+        gate_basis = cfg.gate_basis_size if cfg.gate_basis_size is not None else min(K, 8)
         gate_basis = max(gate_degree + 1, int(gate_basis))
         basis = _build_bspline_basis(freq_pos, gate_basis, gate_degree)
         self.register_buffer("_gate_basis", basis, persistent=False)
         self.relu = nn.ReLU()
 
-        self.alpha_slow = nn.Parameter(torch.zeros(gate_basis))
-        self.alpha_fast = nn.Parameter(torch.zeros(gate_basis))
+        self.alpha_slow = nn.Parameter(torch.ones(gate_basis))
+        self.alpha_fast = nn.Parameter(torch.ones(gate_basis))
         slow_mask = torch.zeros(gate_basis)
         fast_mask = torch.zeros(gate_basis)
         split_idx = int(gate_basis * 0.6)  # or whatever
@@ -504,14 +504,14 @@ class SFgDNetTryForecaster(nn.Module):
         Returns tensors of shape (1, K, 1) suitable for broadcasting over (B, K, F).
         """
         basis = self._gate_basis.to(device=device, dtype=dtype)  # (K, M)
-        alpha_slow_eff = self.softplus(self.alpha_slow) #* self._slow_alpha_mask.to(device=device, dtype=dtype)
-        alpha_fast_eff = self.softplus(self.alpha_fast) #* self._fast_alpha_mask.to(device=device, dtype=dtype)
+        alpha_slow_eff = self.alpha_slow #* self._slow_alpha_mask.to(device=device, dtype=dtype)
+        alpha_fast_eff = self.alpha_fast #* self._fast_alpha_mask.to(device=device, dtype=dtype)
 
         slow_logits = torch.matmul(basis, alpha_slow_eff)
         fast_logits = torch.matmul(basis, alpha_fast_eff)
 
-        delta_slow = (slow_logits/slow_logits.max()).view(1, -1, 1)
-        delta_fast = (fast_logits/fast_logits.max()).view(1, -1, 1)
+        delta_slow = slow_logits.view(1, -1, 1)
+        delta_fast = fast_logits.view(1, -1, 1)
         return delta_slow, delta_fast
 
     # ------------------------------------------------------------------ Forward
