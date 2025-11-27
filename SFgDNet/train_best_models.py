@@ -116,6 +116,7 @@ def _build_dataset_cfg(
     adjacency: Tuple[Tuple[int, ...], ...],
     window_override: Optional[int] = None,
     horizon_override: Optional[int] = None,
+    seed_override: Optional[int] = None,
 ) -> DatasetCfg:
     batch_size = _coerce_required(best_cfg.get("batch_size"), int, default=128)
     input_n = window_override if window_override is not None else _coerce_required(best_cfg.get("input_n"), int, default=90)
@@ -123,7 +124,7 @@ def _build_dataset_cfg(
         horizon_override if horizon_override is not None else _coerce_required(best_cfg.get("output_n"), int, default=10)
     )
     stride = _coerce_required(best_cfg.get("stride"), int, default=1)
-    seed = _coerce_required(best_cfg.get("seed"), int, default=0)
+    seed = seed_override if seed_override is not None else _coerce_required(best_cfg.get("seed"), int, default=0)
     return DatasetCfg(
         data_dir=data_dir,
         action_filter=action_filter,
@@ -261,6 +262,7 @@ def main():
     ap.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="Root directory containing dataset files.")
     ap.add_argument("--action-filter", default="", help="Action substring filter for dataset files.")
     ap.add_argument("--save-root", default=DEFAULT_SAVE_ROOT, help="Directory to store model artifacts.")
+    ap.add_argument("--seed", type=int, default=None, help="Override random seed for dataset/build pipeline.")
     ap.add_argument("--log-wandb", action="store_true", help="Enable logging to Weights & Biases.")
     ap.add_argument("--wandb-project", type=str, default=None, help="W&B project name.")
     ap.add_argument("--wandb-entity", type=str, default=None, help="W&B entity/team.")
@@ -323,6 +325,7 @@ def main():
                 adjacency=tuple(metadata.get("adjacency", ())),
                 window_override=args.window,
                 horizon_override=args.horizon,
+                seed_override=args.seed,
             )
 
             train_cfg = _build_train_cfg(best_cfg)

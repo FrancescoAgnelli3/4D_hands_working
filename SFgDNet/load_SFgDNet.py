@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -10,11 +9,9 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import torch
-import os
 
-from data import get_dataset_metadata
-from models.SFgDNet import SFgDNetConfig, SFgDNetForecaster
-from models.sfgdnet_try import SFgDNetTryConfig, SFgDNetTryForecaster
+from data import collect_sequences_from_files_wrist_centered, get_dataset_metadata
+from models.sfgdnet_try import SFgDNetTryConfig, SFgDNetTryForecaster # <- MoE forecaster
 
 
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "examples" / "models"
@@ -71,7 +68,7 @@ def find_available_actions(model_dir: Path, model: str, dataset: str) -> Iterabl
     for candidate in sorted(model_dir.glob(f"{prefix}*.pt")):
         stem = candidate.stem
         if stem.startswith(prefix):
-            yield stem[len(prefix) :]
+            yield stem[len(prefix):]
 
 
 def resolve_checkpoint_path(model_dir: Path, model: str, dataset: str, action: str) -> Path:
@@ -91,11 +88,80 @@ class ModelComponents:
     forecaster_cls: type
 
 
+def _resolve_data_dir(dataset: str, override: Path | None) -> Path:
+    if override is not None:
+        data_dir = override
+    else:
+        metadata = get_dataset_metadata(dataset)
+        default_dir = metadata.get("default_dir")
+        if not default_dir:
+            raise ValueError(f"No default data directory configured for dataset '{dataset}'.")
+        data_dir = Path(default_dir)
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Dataset directory '{data_dir}' does not exist.")
+    return data_dir
+
+
+def load_real_history_samples(
+    dataset: str,
+    action: str,
+    *,
+    input_length: int,
+    num_nodes: int,
+    num_samples: int,
+    data_dir: Path | None = None,
+) -> torch.Tensor:
+    metadata = get_dataset_metadata(dataset)
+    resolved_dir = _resolve_data_dir(dataset, data_dir)
+    pattern = f"*{action}*.npy"
+    files = sorted(resolved_dir.glob(pattern))[:num_samples]
+    if not files:
+        raise FileNotFoundError(
+            f"No files found in '{resolved_dir}' matching action '{action}'. "
+            "Pass --data-dir to point at a directory with Assembly .npy files."
+        )
+
+    sequences = collect_sequences_from_files_wrist_centered(
+        [str(path) for path in files],
+        node_count=num_nodes,
+        hand_groups=metadata["hand_groups"],
+        dataset=dataset,
+        time_interp=None,
+        window_norm=input_length,
+    )
+
+    histories: list[torch.Tensor] = []
+    for seq, _ in sequences:
+        coords = torch.from_numpy(seq[:, :, 4:]).to(dtype=torch.float32)
+        total_frames = coords.shape[0]
+        if total_frames < input_length:
+            continue
+        max_start = total_frames - input_length + 1
+        for start in range(max_start):
+            histories.append(coords[start:start + input_length])
+            if len(histories) >= num_samples:
+                break
+        if len(histories) >= num_samples:
+            break
+
+    if not histories:
+        raise RuntimeError(
+            f"Unable to extract any {input_length}-frame history windows for action '{action}'."
+        )
+
+    if len(histories) < num_samples:
+        print(
+            f"Only found {len(histories)} history windows for action '{action}', "
+            f"less than the requested batch size {num_samples}."
+        )
+
+    batch = torch.stack(histories[:num_samples], dim=0)
+    return batch
+
+
 def resolve_model_components(model_name: str) -> ModelComponents:
-    normalized = str(model_name).lower()
-    if normalized == "sfgdnet_try":
-        return ModelComponents(SFgDNetTryConfig, SFgDNetTryForecaster)
-    return ModelComponents(SFgDNetConfig, SFgDNetForecaster)
+    # Only the MoE sfgdnet model
+    return ModelComponents(SFgDNetTryConfig, SFgDNetTryForecaster)
 
 
 def build_config(dataset: str, parsed_tag: dict[str, str | None], config_cls: type) -> Any:
@@ -107,10 +173,13 @@ def build_config(dataset: str, parsed_tag: dict[str, str | None], config_cls: ty
         hidden_dim=coerce_int(parsed_tag.get("hs"), 64),
         norm_axis=parsed_tag.get("simnorm") or "spatial",
         dct_components=coerce_optional_int(parsed_tag.get("dctk")),
-        slow_num_layers=coerce_optional_int(parsed_tag.get("simslow")),
-        fast_num_layers=coerce_optional_int(parsed_tag.get("simfast")),
+        slow_num_layers=coerce_optional_int(parsed_tag.get("simslow")),  # ignored by MoE if not used
+        fast_num_layers=coerce_optional_int(parsed_tag.get("simfast")),  # ignored by MoE if not used
         mid_gate_max=coerce_float(parsed_tag.get("simgate"), 0.9),
-        mask_temperature=coerce_float(parsed_tag.get("simmask") or parsed_tag.get("simlpe_mask_temperature"), 1.0),
+        mask_temperature=coerce_float(
+            parsed_tag.get("simmask") or parsed_tag.get("simlpe_mask_temperature"),
+            1.0,
+        ),
     )
 
 
@@ -131,8 +200,7 @@ def list_actions(model_dir: Path, model: str, dataset: str, explicit: Sequence[s
 @dataclass
 class ActionGateSummary:
     action: str
-    gate_slow: torch.Tensor
-    gate_fast: torch.Tensor
+    gates: torch.Tensor  # shape: [K, G] or [B, K, G]
 
 
 def inspect_checkpoint(
@@ -142,7 +210,13 @@ def inspect_checkpoint(
     action: str,
     mode: str,
     components: ModelComponents,
+    num_samples: int,
+    *,
+    data_dir: Path | None = None,
 ) -> ActionGateSummary:
+    if mode != "gate":
+        raise ValueError(f"Mode '{mode}' not supported for MoE plot. Use 'gate'.")
+
     checkpoint_path = resolve_checkpoint_path(model_dir, model, dataset, action)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     metadata = checkpoint.get("metadata", {})
@@ -151,131 +225,96 @@ def inspect_checkpoint(
 
     forecaster = components.forecaster_cls(cfg)
     state_dict = checkpoint.get("best_model_state", checkpoint)
-    if isinstance(state_dict, dict) and "SFgDNet" in state_dict:
-        state_dict = state_dict["SFgDNet"]
+    # Optional wrapper handling
     if isinstance(state_dict, dict) and "sfgdnet_try" in state_dict:
         state_dict = state_dict["sfgdnet_try"]
     forecaster.load_state_dict(state_dict)
     forecaster.eval()
 
-    dummy_history = torch.zeros(1, cfg.input_length, cfg.num_nodes, 3, dtype=torch.float32)
-    with torch.no_grad():
-        _ = forecaster(dummy_history)
+    history_batch = load_real_history_samples(
+        dataset,
+        action,
+        input_length=cfg.input_length,
+        num_nodes=cfg.num_nodes,
+        num_samples=num_samples,
+        data_dir=data_dir,
+    )
 
-    if mode == "gate":
-        gate_slow = forecaster.last_gate_slow
-        gate_fast = forecaster.last_gate_fast
-    if mode == "mask":
-        gate_slow = forecaster.last_mask
-        gate_fast = 1 - forecaster.last_mask
-    if gate_slow is None or gate_fast is None:
+    with torch.no_grad():
+        _ = forecaster(history_batch)
+
+    gates = forecaster.last_gates
+    if gates is None:
         raise RuntimeError(f"Gates were not populated for action '{action}'.")
 
-    gate_slow = gate_slow.squeeze(0).squeeze(-1).cpu()
-    gate_fast = gate_fast.squeeze(0).squeeze(-1).cpu()
-
+    # Accept both [1, K, G] and [B, K, G]
+    gates = gates.cpu()
     return ActionGateSummary(
         action=action,
-        gate_slow=gate_slow,
-        gate_fast=gate_fast,
+        gates=gates,
     )
 
 
 def plot_gates(summaries: Sequence[ActionGateSummary], output: Path, mode: str) -> None:
+    if mode != "gate":
+        raise ValueError(f"Mode '{mode}' not supported for MoE plot. Use 'gate'.")
+
+    if not summaries:
+        raise ValueError("No summaries provided for plotting.")
+
+    # Infer number of experts from first summary
+    first_gates = summaries[0].gates
+    if first_gates.ndim == 2:
+        # [K, G]
+        num_experts = first_gates.shape[1]
+    elif first_gates.ndim == 3:
+        # [B, K, G]
+        num_experts = first_gates.shape[2]
+    else:
+        raise ValueError(f"Unexpected gate tensor shape: {first_gates.shape}")
+
     with plt.rc_context({"font.size": plt.rcParams["font.size"] * 3}):
-        fig, axes = plt.subplots(2, 1, figsize=(24, 16), sharex=True)
-        if mode == "gate":
-            axes[0].set_title("Slow gate", fontsize="medium")
-            axes[1].set_title("Fast gate", fontsize="medium")
-        if mode == "mask":
-            axes[0].set_title("Slow mask", fontsize="medium")
-            axes[1].set_title("Fast mask", fontsize="medium")
+        fig, axes = plt.subplots(num_experts, 1, figsize=(24, 6 + 4 * num_experts), sharex=True)
+        if num_experts == 1:
+            axes = [axes]
 
-        for summary in summaries:
-            n_slow = summary.gate_slow.numel()
-            n_fast = summary.gate_fast.numel()
+        linewidth = 3.5
 
-            xs_slow = range(n_slow)
-            xs_fast = range(n_fast)
+        for expert_idx in range(num_experts):
+            ax = axes[expert_idx]
+            ax.set_title(f"Expert {expert_idx} gate", fontsize="medium")
 
-            linewidth = 3.5
+            for summary in summaries:
+                gates = summary.gates
 
-            slow_line = axes[0].plot(xs_slow, summary.gate_slow.numpy(), label=summary.action, linewidth=linewidth)[0]
-            fast_line = axes[1].plot(xs_fast, summary.gate_fast.numpy(), label=summary.action, linewidth=linewidth)[0]
+                # Normalize shape to [B, K, G]
+                if gates.ndim == 2:
+                    # [K, G] -> [1, K, G]
+                    gates_bkg = gates.unsqueeze(0)
+                else:
+                    gates_bkg = gates
 
-        for ax in axes:
-            if mode == "gate":
-                ax.set_ylabel("Gate value", fontsize="medium")
-            if mode == "mask":
-                ax.set_ylabel("Mask value", fontsize="medium")
+                batch_size, k_len, g = gates_bkg.shape
+                assert g == num_experts, "Inconsistent number of experts across summaries."
+
+                xs = range(k_len)
+                for b in range(batch_size):
+                    label = summary.action if b == 0 else None
+                    ax.plot(xs, gates_bkg[b, :, expert_idx].numpy(), label=label, linewidth=linewidth)
+
+            ax.set_ylabel("Gate value", fontsize="medium")
             ax.tick_params(axis="both", labelsize="medium")
             ax.grid(True, alpha=0.25)
 
         axes[-1].set_xlabel("DCT component index", fontsize="medium")
-        axes[1].legend(loc="lower right", fontsize="medium")
+        axes[-1].legend(loc="lower right", fontsize="medium")
 
         fig.tight_layout()
         fig.savefig(output)
 
-def plot_mean_sigmoid(summaries: Sequence[ActionGateSummary], output: Path) -> None:
-    if not summaries:
-        raise ValueError("Need at least one action summary to compute mean sigmoid.")
-
-    def _calculate_stats(attr_gate: str, attr_center: str):
-        gates = [getattr(summary, attr_gate) for summary in summaries]
-        min_len = min(g.numel() for g in gates)
-        if min_len == 0:
-            raise ValueError(f"Gate '{attr_gate}' has zero length for at least one action.")
-
-        trimmed = torch.stack([g[:min_len] for g in gates])
-
-
-        return trimmed.mean(0), min_len
-
-    mean_slow, slow_len, nu_s = _calculate_stats("gate_slow", "center_slow")
-    mean_fast, fast_len, nu_f = _calculate_stats("gate_fast", "center_fast")
-
-    max_len = max(slow_len, fast_len)
-
-    with plt.rc_context({"font.size": plt.rcParams["font.size"] * 2.5}):
-        fig, ax = plt.subplots(figsize=(18, 6))
-
-        xs_slow = range(slow_len)
-        xs_fast = range(fast_len)
-
-        slow_line = ax.plot(xs_slow, mean_slow.numpy(), label="Slow gate", linewidth=3.0)[0]
-        fast_line = ax.plot(xs_fast, mean_fast.numpy(), label="Fast gate", linewidth=3.0)[0]
-
-        ax.set_title("Sigmoid gates", fontsize="medium")
-        ax.set_xlabel(r"$\nu$", fontsize="medium")
-        ax.set_ylabel("Gate value", fontsize="medium")
-        ax.tick_params(axis="both", labelsize="medium")
-        ax.grid(True, alpha=0.25)
-
-        color_slow = slow_line.get_color()
-        color_fast = fast_line.get_color()
-
-        ax.axvline(nu_s, color=color_slow, linestyle=":", linewidth=2.5, label=r"$\nu_s$")
-        ax.axvline(nu_f, color=color_fast, linestyle=":", linewidth=2.5, label=r"$\nu_f$")
-
-        base_ticks = [0, 25, 50, 75, 100]
-        extra_ticks = sorted({int(nu_s), int(nu_f)})
-        ax.set_xticks(base_ticks + extra_ticks)
-        ax.set_xticklabels(
-            [f"{t}" for t in base_ticks] +
-            [r"$\nu_s$" if t == int(nu_s) else r"$\nu_f$" for t in extra_ticks]
-        )
-
-        if max_len > 1:
-            ax.set_xlim(0, max_len - 1)
-
-        ax.legend(loc="lower right", bbox_to_anchor=(0.75, 0.0), fontsize="medium")
-
-        fig.tight_layout()
-        fig.savefig(output)
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Inspect SFgDNet checkpoints across actions.")
+    parser = argparse.ArgumentParser(description="Inspect MoE sfgdnet checkpoints across actions.")
     parser.add_argument(
         "--dataset",
         "-d",
@@ -291,7 +330,7 @@ def main() -> None:
         "--model-dir",
         type=Path,
         default=DEFAULT_MODEL_DIR,
-        help=f"Directory with SFgDNet checkpoints (default: {DEFAULT_MODEL_DIR}).",
+        help=f"Directory with model checkpoints (default: {DEFAULT_MODEL_DIR}).",
     )
     parser.add_argument(
         "-a",
@@ -306,16 +345,22 @@ def main() -> None:
         help="Where to write the gate visualization (default: last_.png).",
     )
     parser.add_argument(
-        "--mean-plot-output",
-        type=Path,
-        default=Path("mean_sigmoid.png"),
-        help="Where to write the mean sigmoid visualization (default: mean_sigmoid.png).",
-    )
-    parser.add_argument(
         "--mode",
         type=str,
         default="gate",
-        help="Mode for gate extraction (default: gates, opt: mask).",
+        help="Mode for gate extraction (only 'gate' supported for MoE).",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=5,
+        help="Number of samples in the batch to use for gate inspection (default: 5).",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Optional dataset directory override when loading real Assembly samples.",
     )
     args = parser.parse_args()
 
@@ -333,20 +378,27 @@ def main() -> None:
             action,
             args.mode,
             components,
+            num_samples=args.num_samples,
+            data_dir=args.data_dir,
         )
         summaries.append(summary)
+        gates = summary.gates
+        if gates.ndim == 2:
+            # [K, G]
+            bsz = 1
+            dct_len = gates.shape[0]
+        else:
+            # [B, K, G]
+            bsz = gates.shape[0]
+            dct_len = gates.shape[1]
         print(
-            f"Action {action}: dct_len={summary.gate_slow.numel()}"
+            f"Action {action}: batch_size={bsz}, "
+            f"dct_len={dct_len}, num_experts={gates.shape[-1]}"
         )
 
     plot_output = str(args.plot_output).split(".")[0] + args.mode
-    mean_plot_output = str(args.mean_plot_output).split(".")[0] + args.mode
-
-
     plot_gates(summaries, plot_output, args.mode)
     print(f"Saved gate visualization to {plot_output}")
-    # plot_mean_sigmoid(summaries, mean_plot_output)
-    # print(f"Saved mean sigmoid visualization to {mean_plot_output}")
 
 
 if __name__ == "__main__":

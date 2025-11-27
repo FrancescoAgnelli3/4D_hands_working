@@ -131,6 +131,7 @@ def _build_dataset_cfg(
     window_override: Optional[int] = None,
     horizon_override: Optional[int] = None,
     subset_files: Optional[Tuple[str, ...]] = None,
+    seed_override: Optional[int] = None,
 ) -> DatasetCfg:
     batch_size = _coerce_required(best_cfg.get("batch_size"), int, default=128)
     input_n = window_override if window_override is not None else _coerce_required(best_cfg.get("input_n"), int, default=90)
@@ -138,7 +139,7 @@ def _build_dataset_cfg(
         horizon_override if horizon_override is not None else _coerce_required(best_cfg.get("output_n"), int, default=10)
     )
     stride = _coerce_required(best_cfg.get("stride"), int, default=1)
-    seed = _coerce_required(best_cfg.get("seed"), int, default=0)
+    seed = seed_override if seed_override is not None else _coerce_required(best_cfg.get("seed"), int, default=0)
     return DatasetCfg(
         data_dir=data_dir,
         action_filter=action_filter,
@@ -487,6 +488,7 @@ def main():
                     window_override=current_window,
                     horizon_override=current_horizon,
                     subset_files=train_subset,
+                    seed_override=args.seed,
                 )
 
                 test_ds_cfg = _build_dataset_cfg(
@@ -501,6 +503,7 @@ def main():
                     window_override=current_window,
                     horizon_override=current_horizon,
                     subset_files=test_subset,
+                    seed_override=args.seed,
                 )
 
                 train_dataset, val_dataset, train_test_dataset = build_datasets(train_ds_cfg)

@@ -384,14 +384,17 @@ class SiMLPeBackbone(nn.Module):
         return self.fc_out(x)
 
 
-class SFgDNetTryForecaster(nn.Module):
-    """Two-branch siMLPe with spline-based gates over kept DCT rows.
-    Signature: __init__(cfg), forward(history) -> future.
 
-    Padding:
-        By default, compute padding with the learned predictor (repeat single
-        frame or full horizon) and fall back to the last frame if
-        cfg.padding_mode is ``repeat_last``.
+class SFgDNetTryForecaster(nn.Module):
+    """Multi-gate DCT MoE forecaster with spline-based frequency gates.
+
+    History: (B, T_in, N, 3) -> future: (B, T_pred, N, 3).
+
+    Differences vs SFgDNetTryForecaster:
+        - Uses G spline-parameterized frequency gates instead of two (slow/fast).
+        - Uses G SiMLPe experts (ModuleList) on gated DCT coefficients.
+        - Fuses experts with the same continuous gates (no top-k).
+        - Provides a simple L1 regularizer on average gate usage per expert.
     """
     def __init__(self, cfg: "SFgDNetTryConfig") -> None:
         super().__init__()
@@ -400,49 +403,46 @@ class SFgDNetTryForecaster(nn.Module):
 
         # DCT basis (keep K)
         K = cfg.dct_length
-        dct = _build_dct_matrix(T)
-        idct = dct.t()
-        self.register_buffer("_dct_keep", dct[:K, :], persistent=False)
-        self.register_buffer("_idct_keep", idct[:, :K], persistent=False)
+        dct = _build_dct_matrix(T)  # (T, T)
+        idct = dct.t()              # (T, T)
+        self.register_buffer("_dct_keep", dct[:K, :], persistent=False)   # (K, T)
+        self.register_buffer("_idct_keep", idct[:, :K], persistent=False) # (T, K)
         self.full_seq_len = T
         self.dct_len = K
 
-        # Frequency mask over kept bands
-        self.mask_logits = nn.Parameter(torch.zeros(K))
-        self.mask_temperature = nn.Parameter(0.1 * torch.ones(1), requires_grad=True)
+        # Number of experts/gates
+        self.num_gates: int = int(getattr(cfg, "num_gates", 4))  # keep small (e.g. 3–4)
 
-        # Frequency positions p_k ∈ [0,1]
+        # Frequency positions in [0,1]
         freq_pos = torch.linspace(0.0, 1.0, K)
         self.register_buffer("_freq_pos", freq_pos, persistent=False)
 
-        # Spline gate parameters
+        # Spline basis over frequency
         gate_degree = max(0, int(cfg.gate_basis_degree))
-        gate_basis = cfg.gate_basis_size if cfg.gate_basis_size is not None else min(K, 8)
+        gate_basis = cfg.gate_basis_size if cfg.gate_basis_size is not None else min(K, 32)
         gate_basis = max(gate_degree + 1, int(gate_basis))
-        basis = _build_bspline_basis(freq_pos, gate_basis, gate_degree)
+        basis = _build_bspline_basis(freq_pos, gate_basis, gate_degree)   # (K, M)
         self.register_buffer("_gate_basis", basis, persistent=False)
-        self.relu = nn.ReLU()
+        self.gate_basis_size = gate_basis
+        self.gate_degree = gate_degree
 
-        self.alpha_slow = nn.Parameter(torch.ones(gate_basis))
-        self.alpha_fast = nn.Parameter(torch.ones(gate_basis))
-        slow_mask = torch.zeros(gate_basis)
-        fast_mask = torch.zeros(gate_basis)
-        split_idx = int(gate_basis * 0.6)  # or whatever
-        slow_mask[:split_idx] = 1.0
-        fast_mask[1-split_idx:] = 1.0
-        self.register_buffer("_slow_alpha_mask", slow_mask, persistent=False)
-        self.register_buffer("_fast_alpha_mask", fast_mask, persistent=False)
-        self.softplus = nn.Softplus()
+        # Spline weights: one column per expert
+        # alpha: (M, G); gates_k,g = sigmoid( (basis @ alpha)_k,g )
+        self.alpha = nn.Parameter(torch.ones(gate_basis, self.num_gates))
 
+        # For inspection
+        self.last_gates: Optional[torch.Tensor] = None   # (1, K, G)
+        self.last_coeffs: Optional[torch.Tensor] = None  # (B, K, F)
 
-        # Branch depths
+        # Branch (expert) depths
         default_layers = getattr(cfg, "num_layers", 6)
-        slow_layers = cfg.slow_num_layers if cfg.slow_num_layers is not None else default_layers
-        fast_layers = cfg.fast_num_layers if cfg.fast_num_layers is not None else max(1, default_layers // 2)
+        expert_layers = cfg.moe_num_layers if getattr(cfg, "moe_num_layers", None) is not None else default_layers
 
-        # Branches operate on K×F sequences
-        self.slow_branch = SiMLPeBackbone(cfg, seq_len_override=K, num_layers_override=slow_layers)
-        self.fast_branch = SiMLPeBackbone(cfg, seq_len_override=K, num_layers_override=fast_layers)
+        # G experts over K × F sequences
+        self.branches = nn.ModuleList([
+            SiMLPeBackbone(cfg, seq_len_override=K, num_layers_override=expert_layers)
+            for _ in range(self.num_gates)
+        ])
 
         # Padding mode
         pad_mode_raw = getattr(cfg, "padding_mode", None)
@@ -464,29 +464,14 @@ class SFgDNetTryForecaster(nn.Module):
                 output_steps=cfg.pred_length if cfg.padding_full_horizon else 1,
             )
 
-        # for inspection
-        self.last_gate_slow: Optional[torch.Tensor] = None
-        self.last_gate_fast: Optional[torch.Tensor] = None
-        self.last_mask: Optional[torch.Tensor] = None
-
-        # Runtime controls
-        self._fixed_mask_value: Optional[float] = None
-        self._fixed_mid_gate_value: Optional[float] = None
-        self._use_slow_branch: bool = True
-        self._use_fast_branch: bool = True
+        # Runtime controls / debug
         self._skip_dct: bool = False
-        self._gate_frozen: bool = False
 
-        # Learning flags for gate parameters
-        self._learn_slow_gate: bool = bool(getattr(cfg, "learn_lambda", True))
-        self._learn_fast_gate: bool = bool(getattr(cfg, "learn_centers", True))
-        self.alpha_slow.requires_grad_(self._learn_slow_gate and not self._gate_frozen)
-        self.alpha_fast.requires_grad_(self._learn_fast_gate and not self._gate_frozen)
-
+    # ------------------------------------------------------------------ Padding
     def _append_with_single_prediction(self, flat_hist: torch.Tensor) -> torch.Tensor:
         """Pad by appending the predictions returned by the learned padder."""
         assert self._padder is not None
-        pad_seq = self._padder(flat_hist)
+        pad_seq = self._padder(flat_hist)  # (B, 1 or T_pred, F)
         if pad_seq.ndim == 2:
             pad_seq = pad_seq.unsqueeze(1)
         pad_len = pad_seq.size(1)
@@ -496,26 +481,70 @@ class SFgDNetTryForecaster(nn.Module):
             raise ValueError(
                 f"Padder returned {pad_len} frames but expected {self.cfg.pred_length}."
             )
-        return torch.cat([flat_hist, pad_seq], dim=1)
+        return torch.cat([flat_hist, pad_seq], dim=1)  # (B, T_total, F)
 
-    def _compute_spline_gates(self, device, dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    # ----------------------------------------------------------- Spline gates
+    def _compute_spline_gates(self, device, dtype) -> torch.Tensor:
         """
-        Build per-band gates δ^f, δ^c with a spline basis expansion over frequency.
-        Returns tensors of shape (1, K, 1) suitable for broadcasting over (B, K, F).
+        Build per-band, per-expert gates G_k,g with a spline basis expansion.
+
+        Returns:
+            gates: (1, K, G) in [0, 1], suitable for broadcasting over (B, K, F).
         """
-        basis = self._gate_basis.to(device=device, dtype=dtype)  # (K, M)
-        alpha_slow_eff = self.alpha_slow #* self._slow_alpha_mask.to(device=device, dtype=dtype)
-        alpha_fast_eff = self.alpha_fast #* self._fast_alpha_mask.to(device=device, dtype=dtype)
+        basis = self._gate_basis.to(device=device, dtype=dtype)   # (K, M)
+        alpha = self.alpha.to(device=device, dtype=dtype)         # (M, G)
+        logits = basis @ alpha                                    # (K, G)
+        gates = torch.sigmoid(logits)                             # (K, G)
+        gates = gates.view(1, self.dct_len, self.num_gates)       # (1, K, G)
+        return gates
 
-        slow_logits = torch.matmul(basis, alpha_slow_eff)
-        fast_logits = torch.matmul(basis, alpha_fast_eff)
+    # --------------------------------------------------------- L1 regularizer
+    def gate_usage_l1(self, lambda_l1: float) -> torch.Tensor:
+        """
+        L1 regularizer on average gate usage per expert.
 
-        delta_slow = slow_logits.view(1, -1, 1)
-        delta_fast = fast_logits.view(1, -1, 1)
-        return delta_slow, delta_fast
+        Usage:
+            loss = main_loss + model.gate_usage_l1(lambda_l1=1e-3)
+
+        Returns:
+            scalar tensor on same device as alpha.
+        """
+        gates = self._compute_spline_gates(self.alpha.device, self.alpha.dtype)  # (1, K, G)
+        usage = gates.mean(dim=(0, 1))  # (G,)
+        return lambda_l1 * usage.abs().sum()
+
+    def gate_diversity_loss(self, lambda_div: float) -> torch.Tensor:
+        """
+        Penalize similarity between experts' gates over frequency.
+
+        Returns a scalar tensor; add it to your loss as:
+            loss = main_loss + model.gate_diversity_loss(lambda_div)
+        """
+        # Use current gates over K frequencies and G experts
+        gates = self._compute_spline_gates(self.alpha.device, self.alpha.dtype)  # (1, K, G)
+        gates = gates.squeeze(0)   # (K, G)
+
+        # Normalize per-expert gate vectors
+        gates = gates / (gates.norm(dim=0, keepdim=True) + 1e-8)  # (K, G)
+
+        # Gram matrix over experts: G x G, diag ~ 1, off-diag are cos-sim
+        gram = gates.t() @ gates  # (G, G)
+
+        # We want gram ≈ I -> off-diagonal entries → 0
+        G = gram.shape[0]
+        eye = torch.eye(G, device=gram.device, dtype=gram.dtype)
+        off_diag = gram - eye
+
+        return lambda_div * (off_diag.pow(2).sum())
+
 
     # ------------------------------------------------------------------ Forward
     def forward(self, history: torch.Tensor) -> torch.Tensor:
+        """
+        history: (B, T_in, N, 3)
+        returns:
+            future: (B, T_pred, N, 3)
+        """
         if history.ndim != 4:
             raise ValueError("history must be shaped (B, T_in, N, 3)")
         B, T_in, N, C = history.shape
@@ -525,47 +554,73 @@ class SFgDNetTryForecaster(nn.Module):
             raise ValueError("Input history must have N=num_nodes and coordinate dim=3.")
 
         Fdim = N * 3
-        flat = history.reshape(B, T_in, Fdim)
+        flat = history.reshape(B, T_in, Fdim)  # (B, T_in, F)
 
         # Padding: learned single-frame prediction or fallback
         if self.cfg.pred_length > 0 and self._padder is not None:
-            padded = self._append_with_single_prediction(flat)
+            padded = self._append_with_single_prediction(flat)  # (B, T_total, F)
+        else:
+            # repeat last frame if no MLP padder
+            if self.cfg.pred_length > 0:
+                last = flat[:, -1:, :].expand(-1, self.cfg.pred_length, -1)
+                padded = torch.cat([flat, last], dim=1)
+            else:
+                padded = flat
 
-        dct = self._dct_keep.unsqueeze(0).to(dtype=padded.dtype, device=padded.device)  # (1, K, T)
-        coeffs = torch.matmul(dct, padded)  # (B, K, F)
+        if self._skip_dct:
+            # Optional debug path: no DCT, just operate in time domain
+            # Still route through experts for consistency
+            seq = padded  # (B, T_total, F)
+            T_total = seq.size(1)
+            if T_total != self.dct_len:
+                raise ValueError("skip_dct=True requires T_total == dct_len.")
+            coeffs = seq  # treat as (B, K, F)
+        else:
+            # DCT over time dimension
+            dct = self._dct_keep.unsqueeze(0).to(dtype=padded.dtype, device=padded.device)  # (1, K, T)
+            coeffs = torch.matmul(dct, padded)  # (B, K, F)
 
-        # Learned gates over frequencies
-        delta_f, delta_c = self._compute_spline_gates(coeffs.device, coeffs.dtype)
-        self.last_gate_slow = delta_f.detach().cpu()
-        self.last_gate_fast = delta_c.detach().cpu()
+        self.last_coeffs = coeffs.detach().cpu()
 
-        # Split coefficients
-        coeffs_slow = delta_f * coeffs
-        coeffs_fast = delta_c * coeffs
+        # Compute spline gates over frequencies and experts
+        gates = self._compute_spline_gates(coeffs.device, coeffs.dtype)  # (1, K, G)
+        self.last_gates = gates.detach().cpu()
 
+        # Prepare for expert-wise gating
+        # coeffs: (B, K, F) -> (B, K, F, 1)
+        coeffs_exp = coeffs.unsqueeze(-1)               # (B, K, F, 1)
+        gates_exp = gates.unsqueeze(2)                  # (1, K, 1, G)
+        coeffs_gated = coeffs_exp * gates_exp          # (B, K, F, G)
 
-        pred_slow = self.slow_branch(coeffs_slow)   # (B, K, F)
-        pred_fast = self.fast_branch(coeffs_fast)   # (B, K, F)
+        # Run each expert on its gated coefficients
+        preds = []
+        for g in range(self.num_gates):
+            input_g = coeffs_gated[..., g]             # (B, K, F)
+            preds_g = self.branches[g](input_g)        # (B, K, F)
+            preds.append(preds_g)
 
-        # Temperatured logistic mask to fuse branches, per-band
-        temp = self.mask_temperature.to(device=coeffs.device, dtype=coeffs.dtype).clamp(min=1e-3)
-        m = torch.sigmoid(self.mask_logits.to(coeffs.device, coeffs.dtype) / temp).view(1, -1, 1)
+        preds = torch.stack(preds, dim=-1)             # (B, K, F, G)
 
+        # Fuse experts using the same continuous gates
+        fused_coeffs = (preds * gates_exp).sum(dim=-1)  # (B, K, F)
 
-        fused_coeffs = m * pred_slow + (1 - m) * pred_fast
-        self.last_mask = m.detach().cpu()
-
-        # iDCT with kept bands
-        idct = self._idct_keep.unsqueeze(0).to(dtype=fused_coeffs.dtype, device=fused_coeffs.device)  # (1, T, K)
-        recon = torch.matmul(idct, fused_coeffs)    # (B, T_total, F)
+        # iDCT with kept bands (if not skipping DCT)
+        if not self._skip_dct:
+            idct = self._idct_keep.unsqueeze(0).to(
+                dtype=fused_coeffs.dtype,
+                device=fused_coeffs.device,
+            )  # (1, T, K)
+            recon = torch.matmul(idct, fused_coeffs)   # (B, T_total, F)
+        else:
+            recon = fused_coeffs  # already in time domain
 
         # Slice future and reshape
         future = recon[:, -self.cfg.pred_length:, :].reshape(B, self.cfg.pred_length, N, 3)
 
         if self.cfg.add_last_offset:
             future = future + history[:, -1:, :, :]
-        return future
 
+        return future
 
 
 __all__ = ["SFgDNetTryConfig", "SFgDNetTryForecaster"]

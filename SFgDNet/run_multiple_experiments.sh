@@ -7,7 +7,7 @@ PYTHON_BIN="${PYTHON:-python3}"
 
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || { echo "Python '${PYTHON_BIN}' not found" >&2; exit 1; }
 
-DATASETS=("fpha")
+DATASETS=("fpha" "assembly" "h2o" "bighands")
 TIME_SPLITS=(
   "51:49"
   "60:40"

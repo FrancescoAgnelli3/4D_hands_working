@@ -1102,6 +1102,13 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
                 else:
                     loss = mpjpe_loss
             
+            if model == "sfgdnet_try":
+                try:
+                    # loss = loss + dual_model.gate_usage_l1(1e-2) 
+                    loss = loss + dual_model.gate_diversity_loss(1e-2)
+                except:
+                    pass
+            
             last_observed_pose = in_3d[:, -1, :, :]
             pred_velocity_mag = _velocity_magnitude(recons, last_observed_pose)
             tgt_velocity_mag = tgt_vel

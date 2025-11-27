@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import pandas as pd
-import re
-from collections import defaultdict
 
 # --- Configuration ---
 # Canonical model name mapping (merge variants into paper row names)
 MODEL_CANON = {
     "last": "Last",
-    "SFgDNet": "SFgDNet",
-    "sfgdnet_try": "SFgDNet-Try",
+    "sfgdnet": "SFgDNet",
+    "sfgdnet_try": "ourmodel",
     "simlpe": "siMLPe",
     "simlpe_dct": "siMLPe",
     "hisrep": "HisRep",
@@ -22,27 +20,11 @@ MODEL_CANON = {
     "eqmotion": "EqMotion",
 }
 
-# Parameter counts to print in the last column
-PARAMS = {
-    "Last": 0.00,
-    "SFgDNet": 0.31,
-    "SFgDNet-Try": 0.31,
-    "siMLPe": 0.32,
-    "HisRep": 0.39,
-    "MPT": 3.23,
-    "Estag": 0.02,
-    "HSTGCNN": 0.03,
-    "TrajDep": 0.19,
-    "PGBig": 2.05,
-    "MotionMixer": 0.10,
-    "EqMotion": 0.12,
-}
-
-# Order of rows in the table
+# Order of rows in the table (as in the provided LaTeX)
 ROW_ORDER = [
     "Last",
     "SFgDNet",
-    "SFgDNet-Try",
+    "ourmodel",
     "siMLPe",
     "HisRep",
     "MPT",
@@ -69,7 +51,7 @@ SPLIT_BUCKETS = [
 ]
 
 
-def normalize_split_label(input_n: int, output_n: int, n = 1) -> str:
+def normalize_split_label(input_n: int, output_n: int, n: int = 1) -> str:
     for a, b, label in SPLIT_BUCKETS:
         if abs(int(input_n) - a) <= n and abs(int(output_n) - b) <= n:
             return label
@@ -78,7 +60,6 @@ def normalize_split_label(input_n: int, output_n: int, n = 1) -> str:
 
 
 def extract_action_suffix(action_field: str) -> str:
-    # Use the last token after '_' as specified
     # Example: "cross_action_train-..._withheld-rotate" -> "rotate"
     return action_field.split("-")[-1].strip().lower()
 
@@ -88,8 +69,9 @@ def canonical_model(model_name: str) -> str | None:
     return MODEL_CANON.get(key)
 
 
-def best_mpjpe_by_key(df: pd.DataFrame,
-                      dataset_filter: str | None = "assembly") -> dict:
+def best_mpjpe_by_key(
+    df: pd.DataFrame, dataset_filter: str | None = "assembly"
+) -> dict:
     """
     Build a dict: results[(model, action, split_label)] = best_mpjpe
     Merges multiple variants into the same canonical model by taking the min MPJPE.
@@ -97,7 +79,7 @@ def best_mpjpe_by_key(df: pd.DataFrame,
     if dataset_filter is not None and "dataset" in df.columns:
         df = df[df["dataset"].str.strip().str.lower() == dataset_filter.lower()].copy()
 
-    store = {}
+    store: dict[tuple[str, str, str], float] = {}
     for _, row in df.iterrows():
         model_raw = str(row["model"])
         model = canonical_model(model_raw)
@@ -109,10 +91,9 @@ def best_mpjpe_by_key(df: pd.DataFrame,
 
         # split label with tolerance
         split_label = normalize_split_label(int(row["input_n"]), int(row["output_n"]))
-        
+
         # only collect values for the three standard splits targeted in the LaTeX
         if split_label not in SPLIT_LABELS:
-            # ignore off-bucket splits so the LaTeX stays aligned
             continue
 
         mpjpe = float(row["validation_mpjpe_norm_best"])
@@ -123,14 +104,19 @@ def best_mpjpe_by_key(df: pd.DataFrame,
     return store
 
 
-def render_table_block(actions: list[str],
-                       store: dict) -> str:
+def render_table_block(actions: list[str], store: dict) -> str:
     """
-    Render one 3-action LaTeX table block matching the user’s template.
+    Render one 3-action LaTeX table block matching the provided template:
+    1 label column + 9 numeric columns (3 actions × 3 splits).
     """
     # Header: action names and cmidrule lines
     action_header = " & ".join([f"\\multicolumn{{3}}{{c}}{{{a}}}" for a in actions])
-    cmid = " ".join([f"\\cmidrule(lr){{{2+3*i}-{4+3*i}}}" for i in range(len(actions))])
+    cmid = " ".join(
+        [f"\\cmidrule(lr){{{2+3*i}-{4+3*i}}}" for i in range(len(actions))]
+    )
+
+    # Column specification: 1 label + 9 numeric columns
+    tabular_cols = "l" + "c" * 9  # -> lccccccccc
 
     # Build rows
     lines = []
@@ -140,19 +126,18 @@ def render_table_block(actions: list[str],
             for split in SPLIT_LABELS:
                 val = store.get((model, action, split))
                 cells.append(f"{val:.3f}" if val is not None else "")
-        # params
-        params = PARAMS.get(model, 0.0)
-        line = f"{model:<12} & " + " & ".join(cells) + f" & {params:.3f} \\\\"
+        line = f"{model:<12} & " + " & ".join(cells) + r" \\"
         lines.append(line)
 
     block = rf"""
 \resizebox{{\textwidth}}{{!}}{{
-\begin{{tabular}}{{lcccccccccccc}}
+\tiny \renewcommand{{\arraystretch}}{{0.9}}
+\begin{{tabular}}{{{tabular_cols}}}
 \hiderowcolors
 \toprule
-\textbf{{Action}} & {action_header} & {{\textbf{{\#Params (M)}}}} \\
+\textbf{{Action}} & {action_header}  \\
 {cmid}
-\textbf{{Split}} & 50/50 & 70/30 & 90/10 & 50/50 & 70/30 & 90/10 & 50/50 & 70/30 & 90/10 &  \\
+\textbf{{Split}} & 50/50 & 70/30 & 90/10 & 50/50 & 70/30 & 90/10 & 50/50 & 70/30 & 90/10 \\
 \midrule
 \showrowcolors
 {chr(10).join(lines)}
@@ -171,15 +156,16 @@ def render_full_table(store: dict) -> str:
 \begin{{table*}}[!ht]
 \centering
 \scriptsize
+\caption{{Comparison on the AssemblyHands dataset (MPJPE, mm). The \textbf{{best}} and \underline{{second-best}} results per column are highlighted. Lower is better.}}
+\label{{tab:assembly_results_competitors}}
 
+% ---- FIRST SUBTABLE ----
 {block1}
 
-\vspace{{1em}}
+\vspace{{0.1em}}
 
+% ---- SECOND SUBTABLE ----
 {block2}
-
-\caption{{Comparison on the AssemblyHands dataset.}}
-\label{{tab:assembly_results_competitors}}
 \end{{table*}}
 """.strip("\n")
     return full
@@ -188,10 +174,16 @@ def render_full_table(store: dict) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Fill LaTeX MPJPE table from CSV.")
     parser.add_argument("--csv", required=True, help="Path to input CSV.")
-    parser.add_argument("--out", default="assembly_results_competitors.txt",
-                        help="Path to output .txt containing LaTeX.")
-    parser.add_argument("--dataset", default="assembly",
-                        help="Dataset filter, default 'assembly'. Set '' to disable.")
+    parser.add_argument(
+        "--out",
+        default="assembly_results_competitors.txt",
+        help="Path to output .txt containing LaTeX.",
+    )
+    parser.add_argument(
+        "--dataset",
+        default="assembly",
+        help="Dataset filter, default 'assembly'. Set '' to disable.",
+    )
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv)
