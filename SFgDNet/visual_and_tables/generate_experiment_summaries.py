@@ -59,6 +59,7 @@ def collect_csv_paths(
     time_splits: Optional[Set[str]],
     action_filter: Optional[Set[str]],
     filename_contains: Optional[str],
+    cross_action_only: bool,
 ) -> List[Tuple[Path, str]]:
     paths: List[Tuple[Path, str]] = []
     for dataset in dataset_names:
@@ -73,6 +74,11 @@ def collect_csv_paths(
             if time_splits is not None and time_split not in time_splits:
                 continue
             if filename_contains and filename_contains not in csv_path.name:
+                continue
+            has_cross_action = "cross_action" in csv_path.name
+            if cross_action_only and not has_cross_action:
+                continue
+            if not cross_action_only and has_cross_action:
                 continue
             paths.append((csv_path, dataset))
     return paths
@@ -132,9 +138,10 @@ def main() -> None:
         help="Directory that contains dataset subfolders produced by best-run extraction.",
     )
     parser.add_argument(
-        "--datasets",
+        "--dataset-folders",
         nargs="+",
-        help="Dataset subfolders under best-runs to include. Defaults to all folders containing results_*.csv.",
+        dest="dataset_folders",
+        help="Optional explicit dataset subfolders under best-runs to include.",
     )
     parser.add_argument(
         "--time-splits",
@@ -156,6 +163,18 @@ def main() -> None:
         "--filename-contains",
         help="Optional substring filter; only CSVs whose filename contains this string are aggregated.",
     )
+    parser.add_argument(
+        "--cross-action",
+        action="store_true",
+        help="If set, only filenames containing 'cross_action' are used; otherwise those files are skipped.",
+    )
+    parser.add_argument(
+        "--datasets",
+        action="store_true",
+        dest="use_other_datasets",
+        help="Toggle dataset set: without this flag only 'assembly' CSVs are used; "
+        "with it, 'h2o', 'bighands', and 'fpha' are used.",
+    )
     args = parser.parse_args()
 
     base_dir = args.best_runs_dir
@@ -170,17 +189,25 @@ def main() -> None:
         sys.exit(0)
 
     dataset_names: List[str]
-    if args.datasets:
-        invalid = [d for d in args.datasets if d not in dataset_candidates]
+    if args.dataset_folders:
+        invalid = [d for d in args.dataset_folders if d not in dataset_candidates]
         if invalid:
             print(
                 f"error: requested dataset folders not found or have no results_*.csv: {', '.join(invalid)}",
                 file=sys.stderr,
             )
             sys.exit(2)
-        dataset_names = args.datasets
+        dataset_names = list(args.dataset_folders)
     else:
-        dataset_names = dataset_candidates
+        target = ["h2o", "bighands", "fpha"] if args.use_other_datasets else ["assembly"]
+        missing = [d for d in target if d not in dataset_candidates]
+        if missing:
+            print(
+                f"error: expected dataset folders not found or have no results_*.csv: {', '.join(missing)}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        dataset_names = target
 
     time_splits: Optional[Set[str]] = {
         split.lower() for split in args.time_splits
@@ -192,7 +219,12 @@ def main() -> None:
 
     try:
         csv_paths = collect_csv_paths(
-            base_dir, dataset_names, time_splits, actions, contains
+            base_dir,
+            dataset_names,
+            time_splits,
+            actions,
+            contains,
+            args.cross_action,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)

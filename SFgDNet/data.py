@@ -90,14 +90,14 @@ DATASET_METADATA = {
     },
     "h2o": {
         "dataset_cls": h2oDataset,
-        "default_dir": "/mnt/turing-datasets/h2o/data/",
+        "default_dir": "/mnt/turing-datasets/h2o/",
         "default_action_filter": "",
         "hand_groups": H2O_HAND_GROUPS,
         "node_count": 42,
     },
     "bighands": {
         "dataset_cls": BigHandsDataset,
-        "default_dir": "/mnt/turing-datasets/BigHand/data/",
+        "default_dir": "/mnt/turing-datasets/BigHands/BigHand2.2M/data/",
         "default_action_filter": "",
         "hand_groups": BIGHAND_HAND_GROUPS,
         "node_count": 21,

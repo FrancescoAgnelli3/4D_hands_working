@@ -15,8 +15,8 @@ ALLOW_EQUAL_WINDOW_HORIZON=true
 SEED=0
 declare -A seen_combinations=()
 
-WINDOWS=(51 70)
-HORIZONS=(49 30)
+WINDOWS=(51 70 90)
+HORIZONS=(49 30 10)
 
 for dataset in "${DATASETS[@]}"; do
   action_list=$(IFS=,; echo "${ACTIONS[*]}")
