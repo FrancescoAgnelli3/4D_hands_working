@@ -64,165 +64,267 @@ def _make_scenario(
     }
 
 
-def _build_reference_scenario() -> Dict[str, object]:
-    """Baseline configuration shared across ablation groups."""
-
-    return _make_scenario(
-        name="reference_learned_softmax",
-        description="Default dual-path model: DCT features, learned gates, and learned padding.",
-        groups=("reference",),
-        overrides={
-            "SFgDNet_padding_mode": "mlp",
-            "SFgDNet_learn_lambda": True,
-            "SFgDNet_learn_centers": True,
-            "SFgDNet_skip_dct": False,
-        },
-    )
+def _total_sequence_length(ds_cfg: DatasetCfg) -> int:
+    return int(ds_cfg.input_n + ds_cfg.output_n)
 
 
-def _build_component_ablation_scenarios() -> List[Dict[str, object]]:
-    """Remove each core component to showcase additive contributions."""
-
-    return [
-        _make_scenario(
-            name="component_no_dct",
-            description="Bypass the DCT projection entirely (raw temporal MLP).",
-            groups=("component", "dct"),
-            overrides={
-                "SFgDNet_skip_dct": True,
-            },
-        ),
-        _make_scenario(
-            name="component_no_gate_single_branch",
-            description="Remove the learned gate by keeping only the slow branch (mask fixed to 1).",
-            groups=("component", "gate"),
-            overrides={
-                "SFgDNet_disable_fast_branch": True,
-                "SFgDNet_disable_slow_branch": False,
-                "SFgDNet_freeze_gate": True,
-                "SFgDNet_fixed_mask": 1.0,
-            },
-        ),
-        _make_scenario(
-            name="component_fixed_gate_centers",
-            description="Freeze λ and gate centers at their defaults to remove gate learning.",
-            groups=("component", "gate"),
-            overrides={
-                "SFgDNet_freeze_gate": True,
-                "SFgDNet_learn_lambda": False,
-                "SFgDNet_learn_centers": False,
-                "SFgDNet_fixed_lambda": 1.0,
-                "SFgDNet_fixed_centers": (0.25, 0.75),
-            },
-        ),
-        _make_scenario(
-            name="component_frozen_gates",
-            description="Keep the slow/fast gates fixed by freezing every gate parameter after initialization.",
-            groups=("component", "gate"),
-            overrides={
-                "SFgDNet_freeze_gate": True,
-                "SFgDNet_learn_lambda": False,
-                "SFgDNet_learn_centers": False,
-            },
-        ),
-        _make_scenario(
-            name="component_no_padder_repeat_last",
-            description="Remove the padder and simply repeat the final observed frame.",
-            groups=("component", "padder"),
-            overrides={
-                "SFgDNet_padding_mode": "repeat_last",
-                "SFgDNet_force_mlp_padding": False,
-            },
-        ),
-        _make_scenario(
-            name="component_padder_rnn_single_step",
-            description="Use an RNN-based padder to predict the single frame before duplication.",
-            groups=("component", "padder"),
-            overrides={
-                "SFgDNet_padding_mode": "mlp",
-                "SFgDNet_force_mlp_padding": True,
-                "SFgDNet_padding_predictor": "rnn",
-            },
-        ),
-        _make_scenario(
-            name="component_padder_mlp_full_horizon",
-            description="Have the padder MLP predict the entire horizon instead of repeating one step.",
-            groups=("component", "padder"),
-            overrides={
-                "SFgDNet_padding_mode": "mlp",
-                "SFgDNet_force_mlp_padding": True,
-                "SFgDNet_padding_full_horizon": True,
-            },
-        ),
-        _make_scenario(
-            name="component_transmlp_mixed_layers",
-            description="Enforce alternating temporal/spatial layers inside the TransMLP backbone.",
-            groups=("component", "backbone"),
-            overrides={
-                "simlpe_mix_spatial_temporal": True,
-            },
-        ),
-    ]
-
-
-def _make_dct_override(divisor: int):
+def _constant_override(value: int):
     def _override(train_cfg: TrainCfg, ds_cfg: DatasetCfg) -> int:
-        total = int(ds_cfg.input_n + ds_cfg.output_n)
-        if divisor <= 1:
-            return max(1, total)
+        return int(value)
+
+    return _override
+
+
+def _full_sequence_override(train_cfg: TrainCfg, ds_cfg: DatasetCfg) -> int:
+    return _total_sequence_length(ds_cfg)
+
+
+def _fractional_sequence_override(divisor: float):
+    def _override(train_cfg: TrainCfg, ds_cfg: DatasetCfg) -> int:
+        total = _total_sequence_length(ds_cfg)
+        if divisor <= 0:
+            return total
         keep = max(1, int(round(total / divisor)))
         return keep
 
     return _override
 
 
-def _build_frequency_sweep_scenarios() -> List[Dict[str, object]]:
-    """Vary the number of retained DCT coefficients to show efficiency."""
+def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> List[Dict[str, object]]:
+    """Return the requested Block A–H scenarios for sfgdnet_try."""
 
-    configs = [
-        ("freq_coeff_T_over_8", 8, "Keep K=T/8 coefficients (rounded) to test heavy truncation."),
-        ("freq_coeff_T_over_4", 4, "Keep K=T/4 coefficients to test moderate truncation."),
-        ("freq_coeff_T_over_2", 2, "Keep K=T/2 coefficients for light truncation."),
-        ("freq_coeff_T_over_1", 1, "Keep all K=T coefficients to recover the full DCT."),
-    ]
     scenarios: List[Dict[str, object]] = []
-    for name, divisor, desc in configs:
-        scenarios.append(
+    default_layers = max(1, int(default_layers))
+    layers_minus_two = max(1, default_layers - 2)
+    layers_plus_two = max(1, default_layers + 2)
+
+    # Block A — DCT necessity
+    scenarios.extend(
+        [
             _make_scenario(
-                name=name,
-                description=desc,
-                groups=("frequency", "dct"),
+                name="A1_skip_dct_single_expert",
+                description="Disables the DCT entirely and uses a single expert, testing whether the baseline time-domain model is competitive.",
+                groups=("A", "dct"),
                 overrides={
-                    "dct_keep_coeffs": _make_dct_override(divisor),
+                    "sfgdnet_try_skip_dct": True,
+                    "sfgdnet_try_num_gates": 1,
+                    "dct_keep_coeffs": _full_sequence_override,
                 },
-            )
-        )
+            ),
+            _make_scenario(
+                name="A2_dct_single_expert",
+                description="Enables DCT but still uses a single expert, testing whether the DCT transform alone adds value.",
+                groups=("A", "dct"),
+                overrides={
+                    "sfgdnet_try_skip_dct": False,
+                    "sfgdnet_try_num_gates": 1,
+                    "dct_keep_coeffs": _constant_override(default_dct_len),
+                },
+            ),
+        ]
+    )
+
+    # Block B — DCT length sensitivity
+    scenarios.extend(
+        [
+            _make_scenario(
+                name="B1_dct_full_spectrum",
+                description="No truncation; uses the full spectrum.",
+                groups=("B", "dct_length"),
+                overrides={
+                    "dct_keep_coeffs": _full_sequence_override,
+                },
+            ),
+            _make_scenario(
+                name="B2_dct_half_spectrum",
+                description="Keeps half of the frequency components; tests mid-level truncation.",
+                groups=("B", "dct_length"),
+                overrides={
+                    "dct_keep_coeffs": _fractional_sequence_override(2),
+                },
+            ),
+            _make_scenario(
+                name="B4_dct_30",
+                description="Tests aggressive truncation to measure robustness under limited bandwidth.",
+                groups=("B", "dct_length"),
+                overrides={
+                    "dct_keep_coeffs": _constant_override(30),
+                },
+            ),
+        ]
+    )
+
+    # Block C — Number of experts
+    scenarios.extend(
+        [
+            _make_scenario(
+                name="C1_one_expert",
+                description="Removes the MoE; baseline single-expert model.",
+                groups=("C", "experts"),
+                overrides={"sfgdnet_try_num_gates": 1},
+            ),
+            _make_scenario(
+                name="C2_two_experts",
+                description="Minimal mixture; tests if two experts already help.",
+                groups=("C", "experts"),
+                overrides={"sfgdnet_try_num_gates": 2},
+            ),
+            _make_scenario(
+                name="C4_six_experts",
+                description="Tests whether additional experts saturate or degrade performance through overspecialization.",
+                groups=("C", "experts"),
+                overrides={"sfgdnet_try_num_gates": 6},
+            ),
+        ]
+    )
+
+    # Block D — Padding mechanism
+    scenarios.extend(
+        [
+            _make_scenario(
+                name="D1_repeat_last_padding",
+                description="No learned padding; baseline.",
+                groups=("D", "padding"),
+                overrides={
+                    "sfgdnet_try_padding_mode": "repeat_last",
+                    "sfgdnet_try_force_mlp_padding": False,
+                },
+            ),
+            _make_scenario(
+                name="D3_mlp_full_horizon",
+                description="Predicts the full forecast horizon at once; tests whether horizon-wide padding is beneficial.",
+                groups=("D", "padding"),
+                overrides={
+                    "sfgdnet_try_padding_mode": "mlp",
+                    "sfgdnet_try_force_mlp_padding": True,
+                    "sfgdnet_try_padding_predictor": "mlp",
+                    "sfgdnet_try_padding_full_horizon": True,
+                },
+            ),
+            _make_scenario(
+                name="D4_rnn_single_frame",
+                description="Tests whether using an RNN to predict the padding frame helps.",
+                groups=("D", "padding"),
+                overrides={
+                    "sfgdnet_try_padding_mode": "mlp",
+                    "sfgdnet_try_force_mlp_padding": True,
+                    "sfgdnet_try_padding_predictor": "rnn",
+                    "sfgdnet_try_padding_full_horizon": False,
+                },
+            ),
+        ]
+    )
+
+    # Block E — Spline basis structure
+    scenarios.extend(
+        [
+            _make_scenario(
+                name="E1_degree0_minimal_basis",
+                description="Piecewise-constant gating; minimal capacity.",
+                groups=("E", "spline"),
+                overrides={
+                    "sfgdnet_try_gate_basis_degree": 0,
+                    "sfgdnet_try_gate_basis_size": 1,
+                },
+            ),
+            _make_scenario(
+                name="E2_degree0_wide_basis",
+                description="Step-wise gating with higher capacity.",
+                groups=("E", "spline"),
+                overrides={
+                    "sfgdnet_try_gate_basis_degree": 0,
+                    "sfgdnet_try_gate_basis_size": 16,
+                },
+            ),
+            _make_scenario(
+                name="E3_degree1_linear_basis",
+                description="Linear spline gating; tests usefulness of mild smoothness.",
+                groups=("E", "spline"),
+                overrides={
+                    "sfgdnet_try_gate_basis_degree": 1,
+                    "sfgdnet_try_gate_basis_size": 16,
+                },
+            ),
+            _make_scenario(
+                name="E4_degree3_smooth_basis",
+                description="Full spline gates with strong smoothness (BASELINE). Tests whether continuity is required.",
+                groups=("E", "spline"),
+                overrides={
+                    "sfgdnet_try_gate_basis_degree": 3,
+                    "sfgdnet_try_gate_basis_size": 32,
+                },
+            ),
+        ]
+    )
+
+    # Block F — Gate regularization
+    scenarios.extend(
+        [
+            _make_scenario(
+                name="F1_no_gate_regularization",
+                description="No regularization; baseline gate behavior.",
+                groups=("F", "regularization"),
+                overrides={
+                    "sfgdnet_try_lambda_l1": 0.0,
+                    "sfgdnet_try_lambda_div": 0.0,
+                },
+            ),
+            _make_scenario(
+                name="F2_l1_only",
+                description="Encourages experts to use sparse frequency regions.",
+                groups=("F", "regularization"),
+                overrides={
+                    "sfgdnet_try_lambda_l1": 1e-3,
+                    "sfgdnet_try_lambda_div": 0.0,
+                },
+            ),
+            _make_scenario(
+                name="F3_diversity_only",
+                description="Encourages diversity across experts.",
+                groups=("F", "regularization"),
+                overrides={
+                    "sfgdnet_try_lambda_l1": 0.0,
+                    "sfgdnet_try_lambda_div": 1e-3,
+                },
+            ),
+        ]
+    )
+
+    # Block G — Routing mechanism
+    scenarios.extend(
+        [
+            _make_scenario(
+                name="G2_top1_routing",
+                description="Hard top-k routing with k=1; each frequency goes to the most active expert.",
+                groups=("G", "routing"),
+                overrides={"sfgdnet_try_routing": "top1"},
+            ),
+            _make_scenario(
+                name="G3_hard_partition_routing",
+                description="Explicitly partitions the frequency axis into hard bands.",
+                groups=("G", "routing"),
+                overrides={"sfgdnet_try_routing": "hard_partition"},
+            ),
+        ]
+    )
+
+    # Block H — Backbone behaviour
+    scenarios.extend(
+        [
+            _make_scenario(
+                name="H2_mixed_projections",
+                description="Alternates spatial/temporal projections; tests coupling.",
+                groups=("H", "backbone"),
+                overrides={
+                    "simlpe_mix_spatial_temporal": True,
+                    "simlpe_norm_axis": "spatial",
+                    "sfgdnet_try_num_layers": default_layers,
+                },
+            ),
+        ]
+    )
+
     return scenarios
-
-
-def _build_loss_ablation_scenarios(train_cfg: TrainCfg) -> List[Dict[str, object]]:
-    """Remove each auxiliary loss to expose its effect."""
-
-    base_bone = float(train_cfg.bone_loss_weight)
-    base_vel = float(train_cfg.velocity_loss_weight)
-    return [
-        _make_scenario(
-            name="loss_no_bone",
-            description=f"Drop L_bone (baseline weight {base_bone:.4f}) to show skeleton prior impact.",
-            groups=("loss", "bone"),
-            overrides={
-                "bone_loss_weight": 0.0,
-            },
-        ),
-        _make_scenario(
-            name="loss_no_velocity",
-            description=f"Drop L_vel (baseline weight {base_vel:.4f}) to show smoothness contribution.",
-            groups=("loss", "velocity"),
-            overrides={
-                "velocity_loss_weight": 0.0,
-            },
-        ),
-    ]
 
 
 def _append_custom_row(
@@ -258,6 +360,12 @@ def _format_seconds(seconds: float) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Architecture ablations for the SiMLPe Dual model.")
     parser.add_argument("--dataset", type=str, default="assembly", choices=DATASET_CHOICES)
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="sfgdnet_try",
+        help="Model key to pull from the best-model JSON (default: sfgdnet_try).",
+    )
     parser.add_argument("--best-json", type=str, default=BEST_MODELS_PATH, help="JSON file with best-model configurations.")
     parser.add_argument("--data-dir", type=str, default="", help="Override dataset root directory.")
     parser.add_argument("--action-filter", type=str, default="pick", help="Optional action substring filter.")
@@ -295,7 +403,7 @@ def main() -> None:
     best_json_path = _dataset_file_path(args.best_json, dataset_name)
     if not os.path.exists(best_json_path) and os.path.exists(args.best_json):
         best_json_path = args.best_json
-    best_cfg = _load_best_config(best_json_path, "SFgDNet")
+    best_cfg = _load_best_config(best_json_path, args.model)
 
     ds_cfg_template = _build_dataset_cfg(
         best_cfg,
@@ -310,8 +418,8 @@ def main() -> None:
         horizon_override=args.horizon,
     )
 
-    train_cfg_template = _build_train_cfg(best_cfg)
-    train_cfg_template.model = "SFgDNet"
+    train_cfg_template = _build_train_cfg(best_cfg, model_name=args.model)
+    train_cfg_template.model = args.model
     train_cfg_template.save_SFgDNet_mask = bool(args.save_SFgDNet_mask)
     train_cfg_template.save_eval_examples = bool(args.save_eval_examples)
     if args.epochs is not None:
@@ -327,6 +435,19 @@ def main() -> None:
     if train_cfg_template.simlpe_mid_gate_max is None:
         train_cfg_template.simlpe_mid_gate_max = 0.9
 
+    default_total_len = ds_cfg_template.input_n + ds_cfg_template.output_n
+    if train_cfg_template.dct_keep_coeffs is None:
+        baseline_dct_len = default_total_len
+    else:
+        baseline_dct_len = int(train_cfg_template.dct_keep_coeffs)
+    candidate_layers = [
+        getattr(train_cfg_template, "sfgdnet_try_num_layers", None),
+        train_cfg_template.simlpe_fast_layers,
+        train_cfg_template.simlpe_slow_layers,
+    ]
+    baseline_layers = next((int(val) for val in candidate_layers if isinstance(val, int)), 6)
+    baseline_layers = max(1, baseline_layers)
+
     seeds_cli = _parse_comma_list(args.seeds)
     if seeds_cli:
         seed_values = [int(value) for value in seeds_cli]
@@ -335,12 +456,7 @@ def main() -> None:
     else:
         seed_values = [ds_cfg_template.seed]
 
-    scenarios: List[Dict[str, object]] = [
-        _build_reference_scenario(),
-        *_build_component_ablation_scenarios(),
-        *_build_frequency_sweep_scenarios(),
-        *_build_loss_ablation_scenarios(train_cfg_template),
-    ]
+    scenarios: List[Dict[str, object]] = _build_sfgdnet_try_scenarios(baseline_dct_len, baseline_layers)
     scenario_filter = _parse_comma_list(args.scenarios)
     if scenario_filter is not None:
         scenario_filter_set = {name.lower() for name in scenario_filter}
@@ -348,14 +464,14 @@ def main() -> None:
         if not scenarios:
             raise SystemExit(f"No scenarios match the provided filter: {scenario_filter}.")
 
-    results_dir = os.path.join(args.results_root, dataset_name, "simlpe_architecture")
+    results_dir = os.path.join(args.results_root, dataset_name, "sfgdnet_try_architecture")
     _ensure_dir(results_dir)
     results_csv = os.path.join(results_dir, args.results_name)
     results_csv = _append_window_horizon(results_csv, ds_cfg_template.input_n, ds_cfg_template.output_n)
     if action_filter:
         results_csv = results_csv.replace(".csv", f"_{action_filter}.csv")
 
-    save_root_base = os.path.join(args.save_root, dataset_name, "simlpe_architecture")
+    save_root_base = os.path.join(args.save_root, dataset_name, "sfgdnet_try_architecture")
     _ensure_dir(save_root_base)
 
     fieldnames = list(BASE_FIELDNAMES)
@@ -363,19 +479,6 @@ def main() -> None:
         "ablation",
         "ablation_desc",
         "ablation_groups",
-        "SFgDNet_padding_mode",
-        "SFgDNet_force_mlp_padding",
-        "SFgDNet_padding_predictor",
-        "SFgDNet_padding_full_horizon",
-        "simlpe_mix_spatial_temporal",
-        "SFgDNet_skip_dct",
-        "SFgDNet_learn_lambda",
-        "SFgDNet_learn_centers",
-        "SFgDNet_fixed_lambda",
-        "SFgDNet_fixed_centers",
-        "SFgDNet_fixed_mask",
-        "SFgDNet_disable_slow_branch",
-        "SFgDNet_disable_fast_branch",
     ]
     for extra in extra_fields:
         if extra not in fieldnames:
@@ -461,19 +564,21 @@ def main() -> None:
             if row.get("simlpe_mid_gate_max") in (None, "") and scenario_train_cfg.simlpe_mid_gate_max is not None:
                 row["simlpe_mid_gate_max"] = scenario_train_cfg.simlpe_mid_gate_max
             supplemental_keys = [
-                "SFgDNet_padding_mode",
-                "SFgDNet_force_mlp_padding",
-                "SFgDNet_padding_predictor",
-                "SFgDNet_padding_full_horizon",
+                "dct_keep_coeffs",
+                "sfgdnet_try_skip_dct",
+                "sfgdnet_try_num_gates",
+                "sfgdnet_try_padding_mode",
+                "sfgdnet_try_force_mlp_padding",
+                "sfgdnet_try_padding_predictor",
+                "sfgdnet_try_padding_full_horizon",
+                "sfgdnet_try_gate_basis_degree",
+                "sfgdnet_try_gate_basis_size",
+                "sfgdnet_try_lambda_l1",
+                "sfgdnet_try_lambda_div",
+                "sfgdnet_try_routing",
+                "sfgdnet_try_num_layers",
                 "simlpe_mix_spatial_temporal",
-                "SFgDNet_skip_dct",
-                "SFgDNet_learn_lambda",
-                "SFgDNet_learn_centers",
-                "SFgDNet_fixed_lambda",
-                "SFgDNet_fixed_centers",
-                "SFgDNet_fixed_mask",
-                "SFgDNet_disable_slow_branch",
-                "SFgDNet_disable_fast_branch",
+                "simlpe_norm_axis",
             ]
             for key in supplemental_keys:
                 value = getattr(scenario_train_cfg, key, None)

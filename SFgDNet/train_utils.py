@@ -79,15 +79,30 @@ def _build_mpt_generators(
     gen_v = model_4GRU.Generator(input_size, hidden_size, output_n, node_num, batch_size, space, num_layers=gru_layers, **graph_kwargs).to(device)
     return gen_x, gen_y, gen_z, gen_v
 
-def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None,
-          bone_loss_weight: float = 0.0,
-          model: str = "mpt",
-          train_loader: Optional[DataLoader] = None,
-          val_loader: Optional[DataLoader] = None,
-          test_loader: Optional[DataLoader] = None,
-          log_wandb: bool = False,
-          wandb_run: Optional[Any] = None):
+def train(
+    config: dict,
+    epochs: Optional[int] = None,
+    lr: Optional[float] = None,
+    bone_loss_weight: float = 0.0,
+    model: str = "mpt",
+    train_loader: Optional[DataLoader] = None,
+    val_loader: Optional[DataLoader] = None,
+    test_loader: Optional[DataLoader] = None,
+    log_wandb: bool = False,
+    wandb_run: Optional[Any] = None,
+):
     device = U.device()
+
+    raw_model_name = str(model or "").strip()
+    model_key = raw_model_name.lower()
+    if not model_key:
+        model_key = "mpt"
+    if model_key == "sfgdnet":
+        model = "SFgDNet"
+    elif model_key in {"sfgdnet_try", "sfgdnettry"}:
+        model = "sfgdnet_try"
+    else:
+        model = model_key
 
     log_wandb = bool(log_wandb or config.get("log_wandb", False))
     wandb_handle = wandb_run
@@ -320,6 +335,7 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
         fast_layers = config.get("simlpe_fast_layers")
         force_mlp_padding_cfg = config.get(f"{prefix}_force_mlp_padding")
         force_mlp_padding_flag = True if force_mlp_padding_cfg is None else bool(force_mlp_padding_cfg)
+        padding_mode_cfg = config.get(f"{prefix}_padding_mode")
         padding_predictor_cfg = config.get(f"{prefix}_padding_predictor")
         padding_full_horizon_cfg = config.get(f"{prefix}_padding_full_horizon")
         learn_lambda_cfg = config.get(f"{prefix}_learn_lambda")
@@ -330,6 +346,11 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
         fixed_lambda_value = None if fixed_lambda_cfg is None else float(fixed_lambda_cfg)
         fixed_centers_cfg = config.get(f"{prefix}_fixed_centers")
         fixed_centers_value = _parse_fixed_centers_cfg(fixed_centers_cfg)
+        gate_basis_degree_cfg = config.get(f"{prefix}_gate_basis_degree")
+        gate_basis_size_cfg = config.get(f"{prefix}_gate_basis_size")
+        num_gates_cfg = config.get(f"{prefix}_num_gates")
+        num_layers_cfg = config.get(f"{prefix}_num_layers")
+        routing_cfg = config.get(f"{prefix}_routing")
         sim_cfg = config_cls(
             input_length=input_n,
             pred_length=output_n,
@@ -346,6 +367,7 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
             fast_num_layers=None if fast_layers is None else int(fast_layers),
             mid_gate_max=float(config.get("simlpe_mid_gate_max", 0.9)),
             force_mlp_padding=force_mlp_padding_flag,
+            padding_mode=str(padding_mode_cfg) if padding_mode_cfg is not None else None,
             padding_predictor=str(padding_predictor_cfg) if padding_predictor_cfg is not None else "mlp",
             padding_full_horizon=bool(padding_full_horizon_cfg) if padding_full_horizon_cfg is not None else False,
             learn_lambda=learn_lambda_flag,
@@ -353,6 +375,16 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
             fixed_lambda=fixed_lambda_value,
             fixed_centers=fixed_centers_value,
         )
+        if gate_basis_degree_cfg is not None:
+            setattr(sim_cfg, "gate_basis_degree", int(gate_basis_degree_cfg))
+        if gate_basis_size_cfg is not None:
+            setattr(sim_cfg, "gate_basis_size", int(gate_basis_size_cfg))
+        if num_gates_cfg is not None:
+            setattr(sim_cfg, "num_gates", int(num_gates_cfg))
+        if num_layers_cfg is not None:
+            setattr(sim_cfg, "num_layers", int(num_layers_cfg))
+        if routing_cfg is not None:
+            setattr(sim_cfg, "routing", str(routing_cfg))
         model_instance = forecaster_cls(sim_cfg).to(device)
         if bool(config.get(f"{prefix}_skip_dct", False)):
             model_instance.set_skip_dct(True)
@@ -1103,11 +1135,14 @@ def train(config: dict, epochs: Optional[int] = None, lr: Optional[float] = None
                     loss = mpjpe_loss
             
             if model == "sfgdnet_try":
-                try:
-                    # loss = loss + dual_model.gate_usage_l1(1e-2) 
-                    loss = loss + dual_model.gate_diversity_loss(1e-2)
-                except:
-                    pass
+                reg_model = _get_active_dual_model()
+                lambda_l1 = config.get("sfgdnet_try_lambda_l1")
+                lambda_div = config.get("sfgdnet_try_lambda_div")
+                if reg_model is not None:
+                    if lambda_l1 not in (None, 0, 0.0):
+                        loss = loss + reg_model.gate_usage_l1(float(lambda_l1))
+                    if lambda_div not in (None, 0, 0.0):
+                        loss = loss + reg_model.gate_diversity_loss(float(lambda_div))
             
             last_observed_pose = in_3d[:, -1, :, :]
             pred_velocity_mag = _velocity_magnitude(recons, last_observed_pose)

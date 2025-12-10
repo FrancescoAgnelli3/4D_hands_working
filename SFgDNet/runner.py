@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from config import DatasetCfg, TrainCfg
-from train_and_test import train
+from train_utils import train
 
 
 def set_global_seed(seed: int) -> None:
@@ -246,6 +246,20 @@ def run_experiment(
         config["sfgdnet_try_fixed_lambda"] = float(train_cfg.sfgdnet_try_fixed_lambda)
     if train_cfg.sfgdnet_try_fixed_centers is not None:
         config["sfgdnet_try_fixed_centers"] = tuple(float(v) for v in train_cfg.sfgdnet_try_fixed_centers)
+    if train_cfg.sfgdnet_try_num_gates is not None:
+        config["sfgdnet_try_num_gates"] = int(train_cfg.sfgdnet_try_num_gates)
+    if train_cfg.sfgdnet_try_gate_basis_degree is not None:
+        config["sfgdnet_try_gate_basis_degree"] = int(train_cfg.sfgdnet_try_gate_basis_degree)
+    if train_cfg.sfgdnet_try_gate_basis_size is not None:
+        config["sfgdnet_try_gate_basis_size"] = int(train_cfg.sfgdnet_try_gate_basis_size)
+    if train_cfg.sfgdnet_try_num_layers is not None:
+        config["sfgdnet_try_num_layers"] = int(train_cfg.sfgdnet_try_num_layers)
+    if train_cfg.sfgdnet_try_lambda_l1 is not None:
+        config["sfgdnet_try_lambda_l1"] = float(train_cfg.sfgdnet_try_lambda_l1)
+    if train_cfg.sfgdnet_try_lambda_div is not None:
+        config["sfgdnet_try_lambda_div"] = float(train_cfg.sfgdnet_try_lambda_div)
+    if train_cfg.sfgdnet_try_routing is not None:
+        config["sfgdnet_try_routing"] = str(train_cfg.sfgdnet_try_routing)
     wandb_run = None
     wandb_logging_active = False
     if log_wandb:

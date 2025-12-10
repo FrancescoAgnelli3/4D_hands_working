@@ -47,6 +47,7 @@ for dataset in "${DATASETS[@]}"; do
             --seed "${SEED}" \
             --window "${window}" \
             --horizon "${horizon}" \
+            --model "estag" \
             "$@"; then
         echo "Run FAILED: dataset=${dataset} test=${withheld} window=${window} horizon=${horizon}" >&2
       fi

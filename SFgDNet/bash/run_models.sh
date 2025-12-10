@@ -21,6 +21,7 @@ HORIZONS=(49 40 30 20 10)
 ALLOW_EQUAL_WINDOW_HORIZON=true
 
 DEFAULT_MODEL_LIST="last,hisrep,simlpe_dct,SFgDNet,sfgdnet_try,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion"
+# DEFAULT_MODEL_LIST="sfgdnet_try"
 IFS=',' read -r -a MODELS <<< "${DEFAULT_MODEL_LIST}"
 
 for dataset in "${DATASETS[@]}"; do

@@ -241,7 +241,11 @@ def main():
             "highlighting best and second-best results per column (lower is better)."
         )
     )
-    parser.add_argument("--csv", required=True, help="Path to CSV with all datasets.")
+    parser.add_argument(
+        "--csv", 
+        default="/home/agnelli/projects/4D_hands_working/SFgDNet/out/best_runs/aggregate.csv", 
+        help="Path to input CSV (single file with all results)."
+    )
     parser.add_argument(
         "--metric-col",
         default="validation_mpjpe_norm_best",

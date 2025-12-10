@@ -1,12 +1,10 @@
 import argparse
-import json
 import math
 import os
 import time
-from dataclasses import asdict
 from typing import Dict, Optional, Tuple
 
-from config import DATASET_CHOICES, DatasetCfg, TrainCfg
+from config import DATASET_CHOICES, DatasetCfg, TrainCfg, MODEL_DEFAULT_CONFIGS
 from data import build_datasets, get_dataset_metadata, make_loaders
 from runner import run_experiment
 
@@ -26,26 +24,12 @@ FIELDNAMES = [
     "stride",
     "batch_size",
     "hidden_size",
-    "gru_layers",
-    "t_layers",
-    "gnn_layers",
     "lr",
     "gradient_clip",
     "use_space",
     "bone_loss_weight",
     "velocity_loss_weight",
     "dct_keep_coeffs",
-    "hisrep_hand_dct_n",
-    "hisrep_dct_n",
-    "simlpe_norm_axis",
-    "simlpe_use_norm",
-    "simlpe_use_spatial_fc_only",
-    "simlpe_mix_spatial_temporal",
-    "simlpe_add_last_offset",
-    "simlpe_mask_temperature",
-    "simlpe_slow_layers",
-    "simlpe_fast_layers",
-    "simlpe_mid_gate_max",
     "epochs",
     "params",
     "train_mpjpe_best",
@@ -95,13 +79,13 @@ def _dataset_file_path(base_path: str, dataset: str) -> str:
 
 
 def _load_best_config(best_json: str, model_name: str) -> Dict[str, object]:
-    if not os.path.exists(best_json):
-        raise FileNotFoundError(f"Best-model JSON not found: {best_json}")
-    with open(best_json, "r") as f:
-        data = json.load(f)
-    if model_name not in data:
-        raise KeyError(f"Model '{model_name}' not present in {best_json}")
-    return data[model_name]
+    normalized_name = model_name.lower()
+    if normalized_name not in MODEL_DEFAULT_CONFIGS:
+        raise KeyError(
+            f"No default configuration registered for model '{model_name}'. "
+            "Update MODEL_DEFAULT_CONFIGS in config.py with the desired values."
+        )
+    return dict(MODEL_DEFAULT_CONFIGS[normalized_name])
 
 
 def _build_dataset_cfg(
@@ -143,15 +127,34 @@ def _build_dataset_cfg(
     )
 
 
-def _build_train_cfg(best_cfg: Dict[str, object]) -> TrainCfg:
+def _build_train_cfg(
+    best_cfg: Dict[str, object], *, epochs_override: Optional[int] = None, model_name: Optional[str] = None
+) -> TrainCfg:
+    target_model = (model_name or str(best_cfg.get("model") or "")).lower()
     use_space_raw = best_cfg.get("use_space")
     use_space = bool(int(use_space_raw)) if use_space_raw not in (None, "", "None") else True
 
+    resolved_model = model_name if model_name is not None else best_cfg.get("model")
+    if resolved_model is None:
+        resolved_model = "mpt"
+    hidden_default = 128 if target_model == "sfgdnet_try" else 64
+    epoch_defaults = {
+        "last": 1,
+        "estag": 10,
+        "pgbig": 10,
+        "eqmotion": 20,
+    }
+    epochs_default = epoch_defaults.get(target_model, 50)
+    epochs = (
+        epochs_override
+        if epochs_override is not None
+        else _coerce_required(best_cfg.get("epochs"), int, default=epochs_default)
+    )
     cfg = TrainCfg(
-        model=str(best_cfg.get("model")),
-        epochs=_coerce_required(best_cfg.get("epochs"), int, default=50),
+        model=str(resolved_model),
+        epochs=epochs,
         lr=_coerce_required(best_cfg.get("lr"), float, default=1e-3),
-        hidden_size=_coerce_required(best_cfg.get("hidden_size"), int, default=64),
+        hidden_size=_coerce_required(best_cfg.get("hidden_size"), int, default=hidden_default),
         gru_layers=_coerce_required(best_cfg.get("gru_layers"), int, default=2),
         gradient_clip=_coerce_required(best_cfg.get("gradient_clip"), float, default=10.0),
         bone_loss_weight=_coerce_required(best_cfg.get("bone_loss_weight"), float, default=0.0),
@@ -172,6 +175,7 @@ def _build_train_cfg(best_cfg: Dict[str, object]) -> TrainCfg:
     cfg.simlpe_slow_layers = _coerce_optional(best_cfg.get("simlpe_slow_layers"), int)
     cfg.simlpe_fast_layers = _coerce_optional(best_cfg.get("simlpe_fast_layers"), int)
     cfg.simlpe_mid_gate_max = _coerce_optional(best_cfg.get("simlpe_mid_gate_max"), float)
+    cfg.sfgdnet_try_num_layers = _coerce_optional(best_cfg.get("num_layers"), int)
 
     return cfg
 
@@ -206,7 +210,7 @@ def _append_window_horizon(path: str, window: int, horizon: int) -> str:
 
 
 def _prepare_result_row(ds_cfg: DatasetCfg, train_cfg: TrainCfg, metrics: Dict[str, float]) -> Dict[str, object]:
-    row = {
+    base = {
         "timestamp": int(time.time()),
         "model": train_cfg.model,
         "dataset": ds_cfg.dataset,
@@ -216,26 +220,12 @@ def _prepare_result_row(ds_cfg: DatasetCfg, train_cfg: TrainCfg, metrics: Dict[s
         "stride": ds_cfg.stride,
         "batch_size": ds_cfg.batch_size,
         "hidden_size": train_cfg.hidden_size,
-        "gru_layers": train_cfg.gru_layers,
-        "t_layers": train_cfg.t_layers,
-        "gnn_layers": train_cfg.gnn_layers,
         "lr": train_cfg.lr,
         "gradient_clip": train_cfg.gradient_clip,
         "use_space": int(train_cfg.use_space),
         "bone_loss_weight": train_cfg.bone_loss_weight,
         "velocity_loss_weight": train_cfg.velocity_loss_weight,
         "dct_keep_coeffs": train_cfg.dct_keep_coeffs,
-        "hisrep_hand_dct_n": train_cfg.hisrep_hand_dct_n,
-        "hisrep_dct_n": train_cfg.hisrep_dct_n,
-        "simlpe_norm_axis": train_cfg.simlpe_norm_axis,
-        "simlpe_use_norm": train_cfg.simlpe_use_norm,
-        "simlpe_use_spatial_fc_only": train_cfg.simlpe_use_spatial_fc_only,
-        "simlpe_mix_spatial_temporal": train_cfg.simlpe_mix_spatial_temporal,
-        "simlpe_add_last_offset": train_cfg.simlpe_add_last_offset,
-        "simlpe_mask_temperature": train_cfg.simlpe_mask_temperature,
-        "simlpe_slow_layers": train_cfg.simlpe_slow_layers,
-        "simlpe_fast_layers": train_cfg.simlpe_fast_layers,
-        "simlpe_mid_gate_max": train_cfg.simlpe_mid_gate_max,
         "epochs": train_cfg.epochs,
         "params": metrics.get("params", 0),
         "train_mpjpe_best": metrics.get("train_mpjpe_best"),
@@ -245,6 +235,11 @@ def _prepare_result_row(ds_cfg: DatasetCfg, train_cfg: TrainCfg, metrics: Dict[s
         "test_mpjpe_best": metrics.get("test_mpjpe_best"),
         "test_mpjpe_norm_best": metrics.get("test_mpjpe_norm_best"),
     }
+
+    row: Dict[str, object] = {}
+    for field in FIELDNAMES:
+        value = base.get(field)
+        row[field] = "" if value is None else value
     return row
 
 
@@ -263,6 +258,7 @@ def main():
     ap.add_argument("--action-filter", default="", help="Action substring filter for dataset files.")
     ap.add_argument("--save-root", default=DEFAULT_SAVE_ROOT, help="Directory to store model artifacts.")
     ap.add_argument("--seed", type=int, default=None, help="Override random seed for dataset/build pipeline.")
+    ap.add_argument("--epochs", type=int, default=100, help="Override the number of training epochs from the best config.")
     ap.add_argument("--log-wandb", action="store_true", help="Enable logging to Weights & Biases.")
     ap.add_argument("--wandb-project", type=str, default=None, help="W&B project name.")
     ap.add_argument("--wandb-entity", type=str, default=None, help="W&B entity/team.")
@@ -328,7 +324,7 @@ def main():
                 seed_override=args.seed,
             )
 
-            train_cfg = _build_train_cfg(best_cfg)
+            train_cfg = _build_train_cfg(best_cfg, epochs_override=args.epochs, model_name=model_name)
             # Ensure the model field reflects the current target model
             train_cfg.model = model_name
             train_cfg.save_SFgDNet_mask = bool(args.save_SFgDNet_mask)

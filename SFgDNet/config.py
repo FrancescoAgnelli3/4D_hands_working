@@ -1,11 +1,194 @@
 import argparse
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 DEFAULT_MODELS = "last,hisrep,eqmotion,simlpe_dct,SFgDNet,sfgdnet_try,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer"
 DATASET_CHOICES: Tuple[str, ...] = ("assembly", "h2o", "bighands", "fpha")
+
+MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
+    "eqmotion": {
+        "model": "eqmotion",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 16,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "epochs": 50,
+    },
+    "estag": {
+        "model": "estag",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 16,
+        "t_layers": 2,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "epochs": 5,
+    },
+    "hisrep": {
+        "model": "hisrep",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 16,
+        "gru_layers": 8,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "hisrep_dct_n": 20,
+        "epochs": 100,
+    },
+    "hstgcnn": {
+        "model": "hstgcnn",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "epochs": 100,
+    },
+    "last": {
+        "model": "last",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "bone_loss_weight": 0.0,
+        "epochs": 1,
+    },
+    "motionmixer": {
+        "model": "motionmixer",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 64,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "epochs": 100,
+    },
+    "mpt": {
+        "model": "mpt",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 128,
+        "gru_layers": 4,
+        "gradient_clip": 10.0,
+        "use_space": 0,
+        "bone_loss_weight": 0.0,
+        "epochs": 100,
+    },
+    "pgbig": {
+        "model": "pgbig",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 6,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "pgbig_dct": 100,
+        "pgbig_dropout": 0.3,
+        "pgbig_encoder_layers": 1,
+        "pgbig_decoder_layers": 2,
+        "epochs": 50,
+    },
+    "simlpe_dct": {
+        "model": "simlpe_dct",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 128,
+        "gru_layers": 8,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "dct_keep_coeffs": None,
+        "simlpe_norm_axis": "all",
+        "simlpe_use_norm": None,
+        "simlpe_use_spatial_fc_only": None,
+        "simlpe_mix_spatial_temporal": None,
+        "simlpe_add_last_offset": None,
+        "epochs": 50,
+    },
+    "sfgdnet": {
+        "model": "SFgDNet",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 64,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "dct_keep_coeffs": None,
+        "simlpe_norm_axis": "all",
+        "simlpe_use_norm": None,
+        "simlpe_use_spatial_fc_only": None,
+        "simlpe_mix_spatial_temporal": None,
+        "simlpe_add_last_offset": None,
+        "simlpe_mask_temperature": 0.1,
+        "simlpe_slow_layers": 6,
+        "simlpe_fast_layers": 6,
+        "simlpe_mid_gate_max": 0.5,
+        "epochs": 100,
+        "num_layers": 32,
+    },
+    "sfgdnet_try": {
+        "model": "sfgdnet_try",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 32,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "dct_keep_coeffs": None,
+        "simlpe_norm_axis": "all",
+        "simlpe_use_norm": None,
+        "simlpe_use_spatial_fc_only": None,
+        "simlpe_mix_spatial_temporal": None,
+        "simlpe_add_last_offset": None,
+        "simlpe_mask_temperature": 0.1,
+        "simlpe_mid_gate_max": 0.5,
+        "epochs": 100,
+        "num_layers": 4,
+        "sfgdnet_try_lambda_l1": 1e-2
+    },
+    "trajdep": {
+        "model": "trajdep",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 32,
+        "gnn_layers": 1,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "trajdep_dropout": 0.5,
+        "trajdep_dct": 35,
+        "epochs": 100,
+    },
+}
 
 
 @dataclass
@@ -113,6 +296,13 @@ class TrainCfg:
     sfgdnet_try_learn_centers: Optional[bool] = None
     sfgdnet_try_fixed_lambda: Optional[float] = None
     sfgdnet_try_fixed_centers: Optional[Tuple[float, float]] = None
+    sfgdnet_try_num_gates: Optional[int] = None
+    sfgdnet_try_gate_basis_degree: Optional[int] = None
+    sfgdnet_try_gate_basis_size: Optional[int] = None
+    sfgdnet_try_num_layers: Optional[int] = None
+    sfgdnet_try_lambda_l1: Optional[float] = None
+    sfgdnet_try_lambda_div: Optional[float] = 1e-2
+    sfgdnet_try_routing: Optional[str] = None
     simlpe_reg_freq_kl: Optional[float] = None
     simlpe_reg_tv: Optional[float] = None
     simlpe_reg_entropy: Optional[float] = None
@@ -138,7 +328,7 @@ def build_argument_parser(base_dir: str, default_data_dir: str) -> argparse.Argu
 
     # Ablation grids
     ap.add_argument("--models", type=str, default=DEFAULT_MODELS, help="Comma list of models to run")
-    ap.add_argument("--hidden-sizes", type=str, default="16,32,64,128")
+    ap.add_argument("--hidden-sizes", type=str, default="8,16,32,64,128")
     ap.add_argument("--gru-layers", type=str, default="4,6,8")
     ap.add_argument("--lrs", type=str, default="0.001")
     ap.add_argument("--use-space", type=str, default="1", help="For mpt only: 1 or 0 (comma list)")
@@ -158,6 +348,12 @@ def build_argument_parser(base_dir: str, default_data_dir: str) -> argparse.Argu
     ap.add_argument("--simlpe-slow-layers", type=str, default="4,6,8", help="Comma-separated slow-branch layer counts for siMLPe dual-path.")
     ap.add_argument("--simlpe-fast-layers", type=str, default="4,6,8", help="Comma-separated fast-branch layer counts for siMLPe dual-path.")
     ap.add_argument("--simlpe-mid-gate-maxes", type=str, default="0.5", help="Comma-separated maximum gate values for the siMLPe dual MID branch.")
+    ap.add_argument(
+        "--sfgdnet-try-num-layers",
+        type=str,
+        default="48, 64",
+        help="Comma-separated expert depths for sfgdnet_try mixtures (num_layers override).",
+    )
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--seeds", type=str, default=None, help="Optional seed list to override --seed")
 

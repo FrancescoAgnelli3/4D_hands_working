@@ -9,13 +9,42 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import torch
+from torch.utils.data import DataLoader
 
-from data import collect_sequences_from_files_wrist_centered, get_dataset_metadata
+from config import DatasetCfg, MODEL_DEFAULT_CONFIGS
+from data import build_datasets, get_dataset_metadata
 from models.sfgdnet_try import SFgDNetTryConfig, SFgDNetTryForecaster # <- MoE forecaster
 
 
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "examples" / "models"
 MODEL_FILE_TEMPLATE = "{model}_{dataset}_{action}.pt"
+DEFAULT_MODEL_NAME = "sfgdnet_try"
+
+
+@dataclass(frozen=True)
+class ModelComponents:
+    model_key: str
+    config_cls: type
+    forecaster_cls: type
+
+
+SUPPORTED_MODELS: dict[str, ModelComponents] = {
+    "sfgdnet_try": ModelComponents(
+        model_key="sfgdnet_try",
+        config_cls=SFgDNetTryConfig,
+        forecaster_cls=SFgDNetTryForecaster,
+    ),
+}
+
+
+def _model_defaults(model_key: str) -> dict[str, object]:
+    defaults = MODEL_DEFAULT_CONFIGS.get(model_key)
+    if defaults is None:
+        raise ValueError(
+            f"No MODEL_DEFAULT_CONFIGS entry found for '{model_key}'. "
+            "Add the configuration to config.py to enable inspection."
+        )
+    return defaults
 
 
 def parse_tag(tag: str | None) -> dict[str, str | None]:
@@ -82,12 +111,6 @@ def resolve_checkpoint_path(model_dir: Path, model: str, dataset: str, action: s
     )
 
 
-@dataclass(frozen=True)
-class ModelComponents:
-    config_cls: type
-    forecaster_cls: type
-
-
 def _resolve_data_dir(dataset: str, override: Path | None) -> Path:
     if override is not None:
         data_dir = override
@@ -102,85 +125,166 @@ def _resolve_data_dir(dataset: str, override: Path | None) -> Path:
     return data_dir
 
 
-def load_real_history_samples(
+def _parse_preprocessing_params(parsed_tag: dict[str, str | None]) -> tuple[int, int | None, int]:
+    stride = coerce_int(parsed_tag.get("st"), 1)
+    time_interp = coerce_optional_int(parsed_tag.get("ti"))
+    seed = coerce_int(parsed_tag.get("seed"), 0)
+    return stride, time_interp, seed
+
+
+def _build_dataset_cfg(
     dataset: str,
     action: str,
     *,
     input_length: int,
+    pred_length: int,
     num_nodes: int,
-    num_samples: int,
-    data_dir: Path | None = None,
-) -> torch.Tensor:
+    stride: int,
+    time_interp: int | None,
+    data_seed: int,
+    data_dir: Path | None,
+) -> DatasetCfg:
     metadata = get_dataset_metadata(dataset)
     resolved_dir = _resolve_data_dir(dataset, data_dir)
-    pattern = f"*{action}*.npy"
-    files = sorted(resolved_dir.glob(pattern))[:num_samples]
-    if not files:
-        raise FileNotFoundError(
-            f"No files found in '{resolved_dir}' matching action '{action}'. "
-            "Pass --data-dir to point at a directory with Assembly .npy files."
-        )
-
-    sequences = collect_sequences_from_files_wrist_centered(
-        [str(path) for path in files],
-        node_count=num_nodes,
-        hand_groups=metadata["hand_groups"],
-        dataset=dataset,
-        time_interp=None,
+    wrist_indices = tuple(metadata.get("default_wrist_indices", ()))
+    edge_index = tuple(metadata.get("edge_index", ()))
+    adjacency = tuple(metadata.get("adjacency", ()))
+    return DatasetCfg(
+        data_dir=str(resolved_dir),
+        action_filter=action,
+        input_n=input_length,
+        output_n=pred_length,
+        stride=stride,
+        time_interp=time_interp,
         window_norm=input_length,
+        batch_size=1,
+        seed=data_seed,
+        wrist_indices=wrist_indices,
+        dataset=dataset,
+        node_count=num_nodes,
+        edge_index=edge_index,
+        adjacency=adjacency,
     )
 
+
+def _build_history_loader(
+    ds_cfg: DatasetCfg,
+    *,
+    loader_batch_size: int,
+    data_seed: int,
+) -> DataLoader:
+    train_dataset, _, _ = build_datasets(ds_cfg)
+    generator = torch.Generator()
+    generator.manual_seed(int(data_seed))
+    batch_size = max(1, loader_batch_size)
+    return DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=False,
+        generator=generator,
+    )
+
+
+def load_normalized_history_samples(
+    dataset: str,
+    action: str,
+    *,
+    input_length: int,
+    pred_length: int,
+    num_nodes: int,
+    num_samples: int,
+    stride: int,
+    time_interp: int | None,
+    data_seed: int,
+    data_dir: Path | None = None,
+    loader_batch_size: int = 1,
+) -> torch.Tensor:
+    ds_cfg = _build_dataset_cfg(
+        dataset,
+        action,
+        input_length=input_length,
+        pred_length=pred_length,
+        num_nodes=num_nodes,
+        stride=stride,
+        time_interp=time_interp,
+        data_seed=data_seed,
+        data_dir=data_dir,
+    )
+    loader = _build_history_loader(
+        ds_cfg,
+        loader_batch_size=min(max(1, loader_batch_size), max(1, num_samples)),
+        data_seed=data_seed,
+    )
     histories: list[torch.Tensor] = []
-    for seq, _ in sequences:
-        coords = torch.from_numpy(seq[:, :, 4:]).to(dtype=torch.float32)
-        total_frames = coords.shape[0]
-        if total_frames < input_length:
-            continue
-        max_start = total_frames - input_length + 1
-        for start in range(max_start):
-            histories.append(coords[start:start + input_length])
-            if len(histories) >= num_samples:
-                break
-        if len(histories) >= num_samples:
+    collected = 0
+    for batch in loader:
+        inputs = batch[0].to(dtype=torch.float32)
+        histories.append(inputs[:, :, :, 4:])
+        collected += inputs.size(0)
+        if collected >= num_samples:
             break
 
     if not histories:
         raise RuntimeError(
-            f"Unable to extract any {input_length}-frame history windows for action '{action}'."
+            f"Unable to collect normalized histories for action '{action}'."
         )
 
-    if len(histories) < num_samples:
+    stacked = torch.cat(histories, dim=0)
+    if stacked.size(0) < num_samples:
         print(
-            f"Only found {len(histories)} history windows for action '{action}', "
-            f"less than the requested batch size {num_samples}."
+            f"  Only found {stacked.size(0)} samples for action '{action}', "
+            f"less than requested {num_samples}."
         )
-
-    batch = torch.stack(histories[:num_samples], dim=0)
-    return batch
+    return stacked[:num_samples]
 
 
-def resolve_model_components(model_name: str) -> ModelComponents:
-    # Only the MoE sfgdnet model
-    return ModelComponents(SFgDNetTryConfig, SFgDNetTryForecaster)
+def resolve_model_components(model_name: str | None) -> ModelComponents:
+    normalized = (model_name or DEFAULT_MODEL_NAME).lower()
+    components = SUPPORTED_MODELS.get(normalized)
+    if components is None:
+        supported = ", ".join(sorted(SUPPORTED_MODELS))
+        raise ValueError(f"Unsupported model '{model_name}'. Supported models: {supported}")
+    return components
 
 
-def build_config(dataset: str, parsed_tag: dict[str, str | None], config_cls: type) -> Any:
+def _get_first_tag(parsed: dict[str, str | None], *keys: str) -> str | None:
+    for key in keys:
+        value = parsed.get(key)
+        if value not in (None, "", "none", "null", "None", "Null"):
+            return value
+    return None
+
+
+def build_config(dataset: str, parsed_tag: dict[str, str | None], components: ModelComponents) -> Any:
     metadata = get_dataset_metadata(dataset)
-    return config_cls(
-        input_length=coerce_int(parsed_tag.get("in"), 70),
-        pred_length=coerce_int(parsed_tag.get("out"), 30),
-        num_nodes=int(metadata["node_count"]),
-        hidden_dim=coerce_int(parsed_tag.get("hs"), 64),
-        norm_axis=parsed_tag.get("simnorm") or "spatial",
-        dct_components=coerce_optional_int(parsed_tag.get("dctk")),
-        slow_num_layers=coerce_optional_int(parsed_tag.get("simslow")),  # ignored by MoE if not used
-        fast_num_layers=coerce_optional_int(parsed_tag.get("simfast")),  # ignored by MoE if not used
-        mid_gate_max=coerce_float(parsed_tag.get("simgate"), 0.9),
-        mask_temperature=coerce_float(
-            parsed_tag.get("simmask") or parsed_tag.get("simlpe_mask_temperature"),
-            1.0,
-        ),
-    )
+    defaults = _model_defaults(components.model_key)
+
+    input_length = coerce_int(parsed_tag.get("in"), int(defaults.get("input_n", 70)))
+    pred_length = coerce_int(parsed_tag.get("out"), int(defaults.get("output_n", 30)))
+    hidden_dim = coerce_int(parsed_tag.get("hs"), int(defaults.get("hidden_size", 64)))
+    norm_axis = parsed_tag.get("simnorm") or defaults.get("simlpe_norm_axis", "spatial")
+
+    dct_override = coerce_optional_int(parsed_tag.get("dctk"))
+    gate_override = parsed_tag.get("simgate")
+    mask_source = _get_first_tag(parsed_tag, "simmask", "simlpe_mask_temperature")
+
+    layers_override = coerce_optional_int(parsed_tag.get("simlayers"))
+    num_layers = layers_override if layers_override is not None else defaults.get("num_layers")
+    if num_layers is None:
+        num_layers = 6
+    cfg_kwargs = {
+        "input_length": input_length,
+        "pred_length": pred_length,
+        "num_nodes": int(metadata["node_count"]),
+        "hidden_dim": hidden_dim,
+        "num_layers": int(num_layers),
+        "norm_axis": norm_axis,
+        "dct_components": dct_override if dct_override is not None else defaults.get("dct_keep_coeffs"),
+        "mid_gate_max": coerce_float(gate_override, float(defaults.get("simlpe_mid_gate_max", 0.9))),
+        "mask_temperature": coerce_float(mask_source, float(defaults.get("simlpe_mask_temperature", 1.0))),
+    }
+    return components.config_cls(**cfg_kwargs)
 
 
 def list_actions(model_dir: Path, model: str, dataset: str, explicit: Sequence[str] | None) -> list[str]:
@@ -210,7 +314,7 @@ def inspect_checkpoint(
     action: str,
     mode: str,
     components: ModelComponents,
-    num_samples: int,
+    num_samples: int | None,
     *,
     data_dir: Path | None = None,
 ) -> ActionGateSummary:
@@ -221,7 +325,7 @@ def inspect_checkpoint(
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     metadata = checkpoint.get("metadata", {})
     parsed_tag = parse_tag(metadata.get("tag"))
-    cfg = build_config(dataset, parsed_tag, components.config_cls)
+    cfg = build_config(dataset, parsed_tag, components)
 
     forecaster = components.forecaster_cls(cfg)
     state_dict = checkpoint.get("best_model_state", checkpoint)
@@ -231,13 +335,29 @@ def inspect_checkpoint(
     forecaster.load_state_dict(state_dict)
     forecaster.eval()
 
-    history_batch = load_real_history_samples(
+    stride, time_interp, data_seed = _parse_preprocessing_params(parsed_tag)
+    train_batch_size = max(1, coerce_int(parsed_tag.get("bs"), 5))
+    effective_samples = num_samples if num_samples is not None else train_batch_size
+    if effective_samples < 1:
+        effective_samples = 1
+    if num_samples is None:
+        print(f"  Using training batch size ({effective_samples}) samples for gate inspection.")
+    else:
+        print(f"  Using {effective_samples} requested samples (training batch size={train_batch_size}).")
+
+    loader_batch_size = max(1, min(effective_samples, train_batch_size))
+    history_batch = load_normalized_history_samples(
         dataset,
         action,
         input_length=cfg.input_length,
+        pred_length=cfg.pred_length,
         num_nodes=cfg.num_nodes,
-        num_samples=num_samples,
+        num_samples=effective_samples,
+        stride=max(1, stride),
+        time_interp=time_interp,
+        data_seed=data_seed,
         data_dir=data_dir,
+        loader_batch_size=loader_batch_size,
     )
 
     with torch.no_grad():
@@ -323,7 +443,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        default="sfgdnet_try",
+        default=DEFAULT_MODEL_NAME,
         help="Model prefix used when naming checkpoints (default: sfgdnet_try).",
     )
     parser.add_argument(
@@ -353,8 +473,8 @@ def main() -> None:
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=5,
-        help="Number of samples in the batch to use for gate inspection (default: 5).",
+        default=10,
+        help="Number of history samples per action; defaults to the training batch size stored in the checkpoint tag.",
     )
     parser.add_argument(
         "--data-dir",
@@ -364,15 +484,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    components = resolve_model_components(args.model)
+    model_name = (args.model or DEFAULT_MODEL_NAME).lower()
+    components = resolve_model_components(model_name)
     requested = None if not args.actions else [act.strip() for act in args.actions if act.strip()]
-    actions = list_actions(args.model_dir, args.model, args.dataset, requested)
+    actions = list_actions(args.model_dir, model_name, args.dataset, requested)
 
     summaries: list[ActionGateSummary] = []
     for action in actions:
         print(f"Loading action {action}...")
         summary = inspect_checkpoint(
-            args.model,
+            model_name,
             args.model_dir,
             args.dataset,
             action,

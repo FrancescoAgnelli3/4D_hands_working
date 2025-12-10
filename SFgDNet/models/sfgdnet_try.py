@@ -18,11 +18,18 @@ Slow/fast band split:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Literal, Tuple
 
 import torch
 from torch import nn
+
+from config import MODEL_DEFAULT_CONFIGS
+
+
+def _sfgdnet_try_default(key: str, fallback):
+    defaults = MODEL_DEFAULT_CONFIGS.get("sfgdnet_try") or {}
+    return defaults.get(key, fallback)
 
 
 # ----------------------------- Norms & FCs -----------------------------------
@@ -227,6 +234,26 @@ def _build_bspline_basis(freq_pos: torch.Tensor, num_basis: int, degree: int) ->
     return basis_prev.transpose(0, 1).contiguous()
 
 
+def _build_hard_partition_mask(num_freq: int, num_gates: int) -> torch.Tensor:
+    if num_freq <= 0 or num_gates <= 0:
+        raise ValueError("num_freq and num_gates must be positive for hard partition routing.")
+    mask = torch.zeros(num_freq, num_gates, dtype=torch.float32)
+    edges = torch.linspace(0, num_freq, steps=num_gates + 1)
+    last_end = 0
+    for gate_idx in range(num_gates):
+        start = int(round(float(edges[gate_idx].item())))
+        end = int(round(float(edges[gate_idx + 1].item())))
+        start = max(last_end, min(start, num_freq - 1))
+        if gate_idx == num_gates - 1:
+            end = num_freq
+        end = max(end, start + 1)
+        if end > num_freq:
+            end = num_freq
+        mask[start:end, gate_idx] = 1.0
+        last_end = end
+    return mask
+
+
 # -------------------------------- Configs ------------------------------------
 
 @dataclass
@@ -253,11 +280,14 @@ class SiMLPeConfig:
 @dataclass
 class SFgDNetTryConfig(SiMLPeConfig):
     """siMLPe with learned soft band partition in the DCT domain."""
-    dct_components: Optional[int] = 100
-    mask_temperature: float = 1
-    slow_num_layers: Optional[int] = 6
-    fast_num_layers: Optional[int] = 6
-    mid_gate_max: float = 1  # unused, kept for signature compatibility
+    num_layers: Optional[int] = field(default=_sfgdnet_try_default("num_layers", None))
+    dct_components: Optional[int] = field(default=_sfgdnet_try_default("dct_keep_coeffs", None))
+    mask_temperature: float = field(default=_sfgdnet_try_default("simlpe_mask_temperature", 1.0))
+    slow_num_layers: Optional[int] = field(default=_sfgdnet_try_default("simlpe_slow_layers", None))
+    fast_num_layers: Optional[int] = field(default=_sfgdnet_try_default("simlpe_fast_layers", None))
+    mid_gate_max: float = field(
+        default=_sfgdnet_try_default("simlpe_mid_gate_max", 1.0)
+    )  # unused, kept for signature compatibility
     gate_basis_size: Optional[int] = None
     gate_basis_degree: int = 3
     learn_lambda: bool = True
@@ -275,7 +305,6 @@ class SFgDNetTryConfig(SiMLPeConfig):
         if keep is None:
             return total
         return max(1, min(int(keep), total))
-
 
 # ---------------------------- Single-frame padder ----------------------------
 
@@ -412,6 +441,16 @@ class SFgDNetTryForecaster(nn.Module):
 
         # Number of experts/gates
         self.num_gates: int = int(getattr(cfg, "num_gates", 4))  # keep small (e.g. 3–4)
+        routing_raw = getattr(cfg, "routing", "soft")
+        routing_mode = str(routing_raw).lower()
+        if routing_mode not in {"soft", "top1", "hard_partition"}:
+            raise ValueError(f"Unknown routing mode '{routing_raw}'. Expected 'soft', 'top1', or 'hard_partition'.")
+        self.routing_mode = routing_mode
+        if routing_mode == "hard_partition":
+            partition_mask = _build_hard_partition_mask(K, self.num_gates)
+        else:
+            partition_mask = torch.zeros(0, 0, dtype=torch.float32)
+        self.register_buffer("_hard_partition_mask", partition_mask, persistent=False)
 
         # Frequency positions in [0,1]
         freq_pos = torch.linspace(0.0, 1.0, K)
@@ -435,8 +474,7 @@ class SFgDNetTryForecaster(nn.Module):
         self.last_coeffs: Optional[torch.Tensor] = None  # (B, K, F)
 
         # Branch (expert) depths
-        default_layers = getattr(cfg, "num_layers", 6)
-        expert_layers = cfg.moe_num_layers if getattr(cfg, "moe_num_layers", None) is not None else default_layers
+        expert_layers = getattr(cfg, "num_layers", 6)
 
         # G experts over K × F sequences
         self.branches = nn.ModuleList([
@@ -467,6 +505,10 @@ class SFgDNetTryForecaster(nn.Module):
         # Runtime controls / debug
         self._skip_dct: bool = False
 
+    # ------------------------------------------------------------------ Controls
+    def set_skip_dct(self, skip: bool = True) -> None:
+        self._skip_dct = bool(skip)
+
     # ------------------------------------------------------------------ Padding
     def _append_with_single_prediction(self, flat_hist: torch.Tensor) -> torch.Tensor:
         """Pad by appending the predictions returned by the learned padder."""
@@ -493,9 +535,25 @@ class SFgDNetTryForecaster(nn.Module):
         """
         basis = self._gate_basis.to(device=device, dtype=dtype)   # (K, M)
         alpha = self.alpha.to(device=device, dtype=dtype)         # (M, G)
-        logits = basis @ alpha                                    # (K, G)
+        logits = torch.matmul(basis, alpha)                                    # (K, G)
         gates = torch.sigmoid(logits)                             # (K, G)
         gates = gates.view(1, self.dct_len, self.num_gates)       # (1, K, G)
+        return self._apply_routing(gates)
+
+    def _apply_routing(self, gates: torch.Tensor) -> torch.Tensor:
+        if self.routing_mode == "soft":
+            return gates
+        if self.routing_mode == "top1":
+            top_idx = gates.argmax(dim=-1, keepdim=True)
+            hard = torch.zeros_like(gates)
+            hard.scatter_(-1, top_idx, 1.0)
+            return hard
+        if self.routing_mode == "hard_partition":
+            mask = self._hard_partition_mask
+            if mask.numel() == 0:
+                return gates
+            mask = mask.to(device=gates.device, dtype=gates.dtype)  # (K, G)
+            return mask.unsqueeze(0)
         return gates
 
     # --------------------------------------------------------- L1 regularizer
@@ -601,8 +659,11 @@ class SFgDNetTryForecaster(nn.Module):
 
         preds = torch.stack(preds, dim=-1)             # (B, K, F, G)
 
-        # Fuse experts using the same continuous gates
+        # # Fuse experts using the same continuous gates
         fused_coeffs = (preds * gates_exp).sum(dim=-1)  # (B, K, F)
+
+        # Fuse experts using normalized mask
+        # fused_coeffs = preds * 
 
         # iDCT with kept bands (if not skipping DCT)
         if not self._skip_dct:

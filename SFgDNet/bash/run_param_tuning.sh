@@ -7,19 +7,13 @@ PYTHON_BIN="${PYTHON:-python3}"
 
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || { echo "Python '${PYTHON_BIN}' not found" >&2; exit 1; }
 
-DATASETS=("fpha" "assembly" "h2o" "bighands")
-TIME_SPLITS=(
-  "51:49"
-  "60:40"
-  "70:30"
-  "80:20"
-  "90:10"
-)
+DATASETS=("assembly")
+TIME_SPLITS=("70 : 30")
 ALLOW_EQUAL_WINDOW_HORIZON=false
 
 ASSEMBLY_ACTION_FILTERS=("pick" "put" "remove" "unscrew" "rotate" "attempt")
 ABLATION_SCRIPT="${SCRIPT_DIR}/ablation_study.py"
-MODEL="${MODEL:-SFgDNet}"
+MODEL="sfgdnet_try"
 
 for dataset in "${DATASETS[@]}"; do
   for split in "${TIME_SPLITS[@]}"; do
@@ -45,7 +39,7 @@ for dataset in "${DATASETS[@]}"; do
               --input-n "${window}" \
               --output-n "${horizon}" \
               --model "${MODEL}" \
-              --preset full \
+              --preset "basic" \
               "$@"; then
           echo "Run FAILED: dataset=${dataset} action=${action_filter} input=${window} output=${horizon}" >&2
         fi

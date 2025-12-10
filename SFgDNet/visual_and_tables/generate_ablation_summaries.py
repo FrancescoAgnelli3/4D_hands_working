@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 # Directory containing the CSVs to aggregate
-BASE_DIR = Path("")
+BASE_DIR = Path("/home/agnelli/projects/4D_hands_working/SFgDNet/out/ablation/assembly/sfgdnet_try_architecture")
 # Output CSV path
 OUTPUT_CSV = BASE_DIR / "aggregate_simlpe_architecture.csv"
 
@@ -16,31 +16,7 @@ FINAL_COLUMNS = [
     "action",  # added: parsed from filename like results_w70_h30_pick.csv
     "ablation",
     "ablation_desc",
-    "ablation_groups",
-    "SFgDNet_padding_mode",
-    "SFgDNet_padding_predictor",
-    "SFgDNet_padding_full_horizon",
-    "SFgDNet_force_mlp_padding",
-    "SFgDNet_skip_dct",
-    "SFgDNet_learn_lambda",
-    "SFgDNet_learn_centers",
-    "SFgDNet_fixed_lambda",
-    "SFgDNet_fixed_centers",
-    "SFgDNet_fixed_mask",
-    "SFgDNet_disable_slow_branch",
-    "SFgDNet_disable_fast_branch",
-    "sfgdnet_try_padding_mode",
-    "sfgdnet_try_padding_predictor",
-    "sfgdnet_try_padding_full_horizon",
-    "sfgdnet_try_force_mlp_padding",
-    "sfgdnet_try_skip_dct",
-    "sfgdnet_try_learn_lambda",
-    "sfgdnet_try_learn_centers",
-    "sfgdnet_try_fixed_lambda",
-    "sfgdnet_try_fixed_centers",
-    "sfgdnet_try_fixed_mask",
-    "sfgdnet_try_disable_slow_branch",
-    "sfgdnet_try_disable_fast_branch",
+    "ablation_groups"
 ]
 
 def parse_float(x: Optional[str]) -> Optional[float]:

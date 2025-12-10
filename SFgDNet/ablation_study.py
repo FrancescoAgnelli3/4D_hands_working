@@ -4,13 +4,102 @@ import math
 import os
 import time
 from dataclasses import asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from torch.utils.data import DataLoader
 
 from config import DatasetCfg, TrainCfg, build_argument_parser, parse_list
 from data import build_datasets, get_dataset_metadata, make_loaders
 from runner import run_experiment
+
+
+CONFIG_SIGNATURE_FIELDS = [
+    "model",
+    "dataset",
+    "seed",
+    "input_n",
+    "output_n",
+    "stride",
+    "batch_size",
+    "hidden_size",
+    "gru_layers",
+    "t_layers",
+    "gnn_layers",
+    "lr",
+    "gradient_clip",
+    "use_space",
+    "bone_loss_weight",
+    "dct_keep_coeffs",
+    "hisrep_hand_dct_n",
+    "hisrep_dct_n",
+    "simlpe_norm_axis",
+    "simlpe_use_norm",
+    "simlpe_use_spatial_fc_only",
+    "simlpe_mix_spatial_temporal",
+    "simlpe_add_last_offset",
+    "simlpe_mask_temperature",
+    "simlpe_slow_layers",
+    "simlpe_fast_layers",
+    "simlpe_mid_gate_max",
+    "sfgdnet_try_num_layers",
+    "epochs",
+]
+
+
+def _normalize_config_value(value: Optional[object]) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    return str(value)
+
+
+def _config_signature(ds: DatasetCfg, cfg: TrainCfg, seed: int) -> Tuple[str, ...]:
+    values = {
+        "model": cfg.model,
+        "dataset": ds.dataset,
+        "seed": seed,
+        "input_n": ds.input_n,
+        "output_n": ds.output_n,
+        "stride": ds.stride,
+        "batch_size": ds.batch_size,
+        "hidden_size": cfg.hidden_size,
+        "gru_layers": cfg.gru_layers,
+        "t_layers": cfg.t_layers,
+        "gnn_layers": cfg.gnn_layers,
+        "lr": cfg.lr,
+        "gradient_clip": cfg.gradient_clip,
+        "use_space": cfg.use_space,
+        "bone_loss_weight": cfg.bone_loss_weight,
+        "dct_keep_coeffs": cfg.dct_keep_coeffs,
+        "hisrep_hand_dct_n": cfg.hisrep_hand_dct_n,
+        "hisrep_dct_n": cfg.hisrep_dct_n,
+        "simlpe_norm_axis": cfg.simlpe_norm_axis,
+        "simlpe_use_norm": cfg.simlpe_use_norm,
+        "simlpe_use_spatial_fc_only": cfg.simlpe_use_spatial_fc_only,
+        "simlpe_mix_spatial_temporal": cfg.simlpe_mix_spatial_temporal,
+        "simlpe_add_last_offset": cfg.simlpe_add_last_offset,
+        "simlpe_mask_temperature": cfg.simlpe_mask_temperature,
+        "simlpe_slow_layers": cfg.simlpe_slow_layers,
+        "simlpe_fast_layers": cfg.simlpe_fast_layers,
+        "simlpe_mid_gate_max": cfg.simlpe_mid_gate_max,
+        "sfgdnet_try_num_layers": cfg.sfgdnet_try_num_layers,
+        "epochs": cfg.epochs,
+    }
+    return tuple(_normalize_config_value(values[field]) for field in CONFIG_SIGNATURE_FIELDS)
+
+
+def _load_existing_configs(csv_path: str) -> Set[Tuple[str, ...]]:
+    configs: Set[Tuple[str, ...]] = set()
+    if not os.path.exists(csv_path):
+        return configs
+    with open(csv_path, "r", newline="") as existing_file:
+        reader = csv.DictReader(existing_file)
+        if not reader.fieldnames:
+            return configs
+        for row in reader:
+            configs.add(tuple((row.get(field, "") or "") for field in CONFIG_SIGNATURE_FIELDS))
+    return configs
 
 
 def _append_window_horizon(path: str, window: int, horizon: int) -> str:
@@ -75,6 +164,9 @@ def main():
     bone_ws = parse_list(args.bone_loss_weights, float)
     t_layers_list = parse_list(args.t_layers, int)
     gnn_layers_list = parse_list(args.gnn_layers, int)
+    sfgdnet_try_num_layers = parse_list(args.sfgdnet_try_num_layers, int) if args.sfgdnet_try_num_layers else []
+    if not sfgdnet_try_num_layers:
+        sfgdnet_try_num_layers = [1, 2, 4, 8]
     simlpe_norm_axes = parse_list(args.simlpe_norm_axes, str) if args.simlpe_norm_axes else ["all"]
     simlpe_use_norms = parse_list(args.simlpe_use_norms, int) if args.simlpe_use_norms else []
     if simlpe_use_norms:
@@ -110,16 +202,19 @@ def main():
     if not hisrep_dct_ns:
         hisrep_dct_ns = [10]
 
+    sfgdnet_try_num_grid = list(sfgdnet_try_num_layers)
+
     if args.preset == "basic":
         models_grid = models
-        hs_grid = [hidden_sizes[0], hidden_sizes[-1]] if len(hidden_sizes) > 1 else hidden_sizes
-        gl_grid = [gru_layers[0], gru_layers[-1]] if len(gru_layers) > 1 else gru_layers
-        lr_grid = [lrs[0]]
-        space_grid = [True]
-        bone_grid = [0.0]
+        hs_grid = hidden_sizes
+        gl_grid = [gru_layers[0]] if gru_layers else [2]
+        lr_grid = [lrs[0]] if lrs else [1e-3]
+        space_grid = [use_space_list[0]] if use_space_list else [True]
+        bone_grid = [bone_ws[0]] if bone_ws else [0.0]
         tl_grid = [t_layers_list[0]] if t_layers_list else [2]
         gnn_grid = [gnn_layers_list[0]] if gnn_layers_list else [2]
         gc_grid = [grad_clips[0]] if grad_clips else [10.0]
+        sfgdnet_try_num_grid = sfgdnet_try_num_layers
     elif args.preset == "extended":
         models_grid = models
         hs_grid = hidden_sizes
@@ -272,7 +367,7 @@ def main():
                             )
                         ),
                     ))
-            elif model in ("SFgDNet", "sfgdnet_try"):
+            elif model == "SFgDNet":
                 for hs, lr, gc, norm_axis, use_norm, spatial_fc, mix_flag, add_offset, dct_val, temp, slow_lay, fast_lay, gate_max in itertools.product(
                     hs_grid,
                     lr_grid,
@@ -310,6 +405,82 @@ def main():
                             )
                         ),
                     ))
+            elif model == "sfgdnet_try":
+                if args.preset == "basic":
+                    norm_axis = simlpe_norm_axes[0] if simlpe_norm_axes else None
+                    use_norm = simlpe_use_norms[0] if simlpe_use_norms else None
+                    spatial_fc = simlpe_spatial_fc_only_flags[0] if simlpe_spatial_fc_only_flags else None
+                    mix_flag = simlpe_mix_spatial_temporal_flags[0] if simlpe_mix_spatial_temporal_flags else None
+                    add_offset = simlpe_add_last_offsets[0] if simlpe_add_last_offsets else None
+                    dct_val = simlpe_dct_components[0] if simlpe_dct_components else None
+                    temp = simlpe_mask_temperatures[0] if simlpe_mask_temperatures else None
+                    slow_lay = simlpe_slow_layers[0] if simlpe_slow_layers else None
+                    fast_lay = simlpe_fast_layers[0] if simlpe_fast_layers else None
+                    gate_max = simlpe_mid_gate_maxes[0] if simlpe_mid_gate_maxes else None
+                    for hs, lr, gc, moe_layers in itertools.product(hs_grid, lr_grid, gc_grid, sfgdnet_try_num_grid):
+                        exps.append((
+                            seed,
+                            _apply_save_flag(
+                                TrainCfg(
+                                    model=model,
+                                    epochs=epochs_for_model,
+                                    lr=lr,
+                                    hidden_size=hs,
+                                    gradient_clip=gc,
+                                    simlpe_norm_axis=norm_axis,
+                                    simlpe_use_norm=use_norm,
+                                    simlpe_use_spatial_fc_only=spatial_fc,
+                                    simlpe_mix_spatial_temporal=mix_flag,
+                                    simlpe_add_last_offset=add_offset,
+                                    dct_keep_coeffs=dct_val,
+                                    simlpe_mask_temperature=temp,
+                                    simlpe_slow_layers=slow_lay,
+                                    simlpe_fast_layers=fast_lay,
+                                    simlpe_mid_gate_max=gate_max,
+                                    sfgdnet_try_num_layers=moe_layers,
+                                )
+                            ),
+                        ))
+                else:
+                    for hs, lr, gc, norm_axis, use_norm, spatial_fc, mix_flag, add_offset, dct_val, temp, slow_lay, fast_lay, gate_max, moe_layers in itertools.product(
+                        hs_grid,
+                        lr_grid,
+                        gc_grid,
+                        simlpe_norm_axes,
+                        simlpe_use_norms,
+                        simlpe_spatial_fc_only_flags,
+                        simlpe_mix_spatial_temporal_flags,
+                        simlpe_add_last_offsets,
+                        simlpe_dct_components,
+                        simlpe_mask_temperatures,
+                        simlpe_slow_layers,
+                        simlpe_fast_layers,
+                        simlpe_mid_gate_maxes,
+                        sfgdnet_try_num_grid,
+                    ):
+                        exps.append((
+                            seed,
+                            _apply_save_flag(
+                                TrainCfg(
+                                    model=model,
+                                    epochs=epochs_for_model,
+                                    lr=lr,
+                                    hidden_size=hs,
+                                    gradient_clip=gc,
+                                    simlpe_norm_axis=norm_axis,
+                                    simlpe_use_norm=use_norm,
+                                    simlpe_use_spatial_fc_only=spatial_fc,
+                                    simlpe_mix_spatial_temporal=mix_flag,
+                                    simlpe_add_last_offset=add_offset,
+                                    dct_keep_coeffs=dct_val,
+                                    simlpe_mask_temperature=temp,
+                                    simlpe_slow_layers=slow_lay,
+                                    simlpe_fast_layers=fast_lay,
+                                    simlpe_mid_gate_max=gate_max,
+                                    sfgdnet_try_num_layers=moe_layers,
+                                )
+                            ),
+                        ))
             elif model in ("hisrep_rigidwrist", "eqmotion"):
                 for hs, gl, lr, gc in itertools.product(hs_grid, gl_grid, lr_grid, gc_grid):
                     exps.append((
@@ -434,6 +605,7 @@ def main():
         "simlpe_slow_layers",
         "simlpe_fast_layers",
         "simlpe_mid_gate_max",
+        "sfgdnet_try_num_layers",
         "epochs",
         "params",
         "train_mpjpe_best",
@@ -466,12 +638,19 @@ def main():
         elif not header_needs_rewrite:
             write_header = False
 
+    existing_configs = _load_existing_configs(results_csv)
+
     with open(results_csv, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
 
         for i, (seed, tr) in enumerate(exps, 1):
+            config_signature = _config_signature(ds, tr, seed)
+            if config_signature in existing_configs:
+                print(f"\n--- [{i}/{len(exps)}] seed={seed} model={tr.model} ---")
+                print("Configuration already present in results CSV; skipping experiment.")
+                continue
             print(f"\n--- [{i}/{len(exps)}] seed={seed} model={tr.model} ---")
             train_loader, val_loader, test_loader = get_loaders_for(seed)
             metrics = run_experiment(
@@ -528,6 +707,7 @@ def main():
                 "simlpe_slow_layers": tr.simlpe_slow_layers,
                 "simlpe_fast_layers": tr.simlpe_fast_layers,
                 "simlpe_mid_gate_max": tr.simlpe_mid_gate_max,
+                "sfgdnet_try_num_layers": tr.sfgdnet_try_num_layers,
                 "epochs": tr.epochs,
                 "params": metrics.get("params", 0),
                 "train_mpjpe_best": train_best_mpjpe,
@@ -548,6 +728,7 @@ def main():
                 "simlpe_slow_layers",
                 "simlpe_fast_layers",
                 "simlpe_mid_gate_max",
+                "sfgdnet_try_num_layers",
             ):
                 if row[key] is None:
                     row[key] = ""
@@ -564,6 +745,7 @@ def main():
                     row[key] = ""
             writer.writerow(row)
             f.flush()
+            existing_configs.add(config_signature)
             print(f"Recorded: {row}")
 
 

@@ -9,7 +9,7 @@ import re
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from config import DATASET_CHOICES, DatasetCfg, TrainCfg
+from config import DATASET_CHOICES, DatasetCfg, TrainCfg, MODEL_DEFAULT_CONFIGS
 from data import build_datasets, get_dataset_metadata, make_loaders
 from runner import run_experiment
 
@@ -109,6 +109,9 @@ def _dataset_file_path(base_path: str, dataset: str) -> str:
 
 
 def _load_best_config(best_json: str, model_name: str) -> Dict[str, object]:
+    normalized_name = model_name.lower()
+    if normalized_name in MODEL_DEFAULT_CONFIGS:
+        return dict(MODEL_DEFAULT_CONFIGS[normalized_name])
     if not os.path.exists(best_json):
         raise FileNotFoundError(f"Best-model JSON not found: {best_json}")
     with open(best_json, "r") as f:
@@ -166,14 +169,19 @@ def _default_epochs_for_model(model_name: Optional[str]) -> int:
 
 
 def _build_train_cfg(best_cfg: Dict[str, object], *, model_name: Optional[str] = None) -> TrainCfg:
+    target_model = (model_name or str(best_cfg.get("model") or "")).lower()
     use_space_raw = best_cfg.get("use_space")
     use_space = bool(int(use_space_raw)) if use_space_raw not in (None, "", "None") else True
 
+    resolved_model = model_name if model_name is not None else best_cfg.get("model")
+    if resolved_model is None:
+        resolved_model = "mpt"
+    hidden_default = 128 if target_model == "sfgdnet_try" else 64
     cfg = TrainCfg(
-        model=str(best_cfg.get("model")),
+        model=str(resolved_model),
         epochs=_coerce_required(best_cfg.get("epochs"), int, default=_default_epochs_for_model(model_name)),
         lr=_coerce_required(best_cfg.get("lr"), float, default=1e-3),
-        hidden_size=_coerce_required(best_cfg.get("hidden_size"), int, default=64),
+        hidden_size=_coerce_required(best_cfg.get("hidden_size"), int, default=hidden_default),
         gru_layers=_coerce_required(best_cfg.get("gru_layers"), int, default=2),
         gradient_clip=_coerce_required(best_cfg.get("gradient_clip"), float, default=10.0),
         bone_loss_weight=_coerce_required(best_cfg.get("bone_loss_weight"), float, default=0.0),
@@ -194,6 +202,9 @@ def _build_train_cfg(best_cfg: Dict[str, object], *, model_name: Optional[str] =
     cfg.simlpe_slow_layers = _coerce_optional(best_cfg.get("simlpe_slow_layers"), int)
     cfg.simlpe_fast_layers = _coerce_optional(best_cfg.get("simlpe_fast_layers"), int)
     cfg.simlpe_mid_gate_max = _coerce_optional(best_cfg.get("simlpe_mid_gate_max"), float)
+    cfg.sfgdnet_try_num_layers = _coerce_optional(best_cfg.get("sfgdnet_try_num_layers"), int)
+    if target_model == "sfgdnet_try" and cfg.sfgdnet_try_num_layers is None:
+        cfg.sfgdnet_try_num_layers = 32
 
     return cfg
 
