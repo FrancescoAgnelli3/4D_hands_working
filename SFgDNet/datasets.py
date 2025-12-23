@@ -6,7 +6,7 @@ import numpy as np
 class AssemblyDataset(Dataset):
     """Sliding-window dataset over multiple (T, N, 7) sequences."""
 
-    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 1):
+    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 5):
         self.sequences: List[torch.Tensor] = []
         self.norm_factors: List[torch.Tensor] = []
         for item in sequences:
@@ -49,7 +49,7 @@ class AssemblyDataset(Dataset):
 class h2oDataset(Dataset):
     """Sliding-window dataset over multiple (T, N, 7) sequences."""
 
-    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 1):
+    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 5):
         self.sequences: List[torch.Tensor] = []
         self.norm_factors: List[torch.Tensor] = []
         for item in sequences:
@@ -92,7 +92,7 @@ class h2oDataset(Dataset):
 class BigHandsDataset(Dataset):
     """Sliding-window dataset over multiple (T, N, 7) sequences."""
 
-    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 1):
+    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 5):
         self.sequences: List[torch.Tensor] = []
         self.norm_factors: List[torch.Tensor] = []
         for item in sequences:
@@ -135,7 +135,7 @@ class BigHandsDataset(Dataset):
 class FPHADataset(Dataset):
     """Sliding-window dataset over multiple (T, N, 7) sequences."""
 
-    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 1):
+    def __init__(self, sequences: List[Union[np.ndarray, Tuple[np.ndarray, float]]], input_n: int, output_n: int, stride: int = 5):
         self.sequences: List[torch.Tensor] = []
         self.norm_factors: List[torch.Tensor] = []
         for item in sequences:
@@ -174,5 +174,4 @@ class FPHADataset(Dataset):
         c = b + self.output_n
         norm_factor = self.norm_factors[si].to(dtype=seq.dtype)
         return seq[a:b], seq[b:c], norm_factor
-
 

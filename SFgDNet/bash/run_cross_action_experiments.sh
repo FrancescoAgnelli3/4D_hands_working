@@ -3,6 +3,7 @@ set -u
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${PYTHON:-python3}"
 
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || { echo "Python '${PYTHON_BIN}' not found" >&2; exit 1; }
@@ -37,8 +38,8 @@ for dataset in "${DATASETS[@]}"; do
       fi
       seen_combinations[$key]=1
       echo "[${dataset}] test=${withheld} window=${window} horizon=${horizon}"
-      results_csv_base="out/best_runs/results_cross_action_${withheld}.csv"
-      if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/train_cross_action_models.py" \
+      results_csv_base="${REPO_ROOT}/out/best_runs/results_cross_action_${withheld}.csv"
+      if ! "${PYTHON_BIN}" "${REPO_ROOT}/train_cross_action_models.py" \
             --dataset "${dataset}" \
             --actions "${action_list}" \
             --test-action "${withheld}" \
@@ -47,7 +48,7 @@ for dataset in "${DATASETS[@]}"; do
             --seed "${SEED}" \
             --window "${window}" \
             --horizon "${horizon}" \
-            --model "estag" \
+            --model "sfgdnet_try" \
             "$@"; then
         echo "Run FAILED: dataset=${dataset} test=${withheld} window=${window} horizon=${horizon}" >&2
       fi

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import random
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Sequence, Mapping
 
 import matplotlib
 matplotlib.use("Agg")
@@ -12,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from config import DatasetCfg, MODEL_DEFAULT_CONFIGS
-from data import build_datasets, get_dataset_metadata
+from data import collect_sequences_from_files_wrist_centered, get_dataset_metadata
 from models.sfgdnet_try import SFgDNetTryConfig, SFgDNetTryForecaster # <- MoE forecaster
 
 
@@ -92,6 +93,23 @@ def coerce_float(value: Any, default: float) -> float:
     return default if not val or val.lower() in {"none", "null"} else float(val)
 
 
+def coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    val = str(value).strip().lower()
+    if not val or val in {"none", "null"}:
+        return default
+    if val in {"true", "1", "yes", "y", "t"}:
+        return True
+    if val in {"false", "0", "no", "n", "f"}:
+        return False
+    return default
+
+
 def find_available_actions(model_dir: Path, model: str, dataset: str) -> Iterable[str]:
     prefix = f"{model}_{dataset}_"
     for candidate in sorted(model_dir.glob(f"{prefix}*.pt")):
@@ -126,7 +144,7 @@ def _resolve_data_dir(dataset: str, override: Path | None) -> Path:
 
 
 def _parse_preprocessing_params(parsed_tag: dict[str, str | None]) -> tuple[int, int | None, int]:
-    stride = coerce_int(parsed_tag.get("st"), 1)
+    stride = coerce_int(parsed_tag.get("st"), 5)
     time_interp = coerce_optional_int(parsed_tag.get("ti"))
     seed = coerce_int(parsed_tag.get("seed"), 0)
     return stride, time_interp, seed
@@ -167,18 +185,97 @@ def _build_dataset_cfg(
     )
 
 
+def _list_dataset_files(ds_cfg: DatasetCfg) -> list[str]:
+    base = Path(ds_cfg.data_dir)
+    candidates = sorted(base.glob("*.npy"))
+    if ds_cfg.action_filter:
+        filtered = [path for path in candidates if ds_cfg.action_filter in path.name]
+    else:
+        filtered = candidates
+    return [str(path) for path in filtered]
+
+
+def _resolve_hand_groups(metadata: dict, ds_cfg: DatasetCfg) -> tuple[dict, ...]:
+    base_groups: tuple[dict, ...] = metadata["hand_groups"]
+    if not ds_cfg.wrist_indices:
+        return base_groups
+    if len(ds_cfg.wrist_indices) != len(base_groups):
+        raise ValueError(
+            "Number of wrist indices must match number of hand groups for the selected dataset."
+        )
+    resolved: list[dict] = []
+    for group, wrist_idx in zip(base_groups, ds_cfg.wrist_indices):
+        new_group = dict(group)
+        new_group["wrist_index"] = int(wrist_idx)
+        resolved.append(new_group)
+    return tuple(resolved)
+
+
+def _window_count(seq_len: int, total_len: int, stride: int) -> int:
+    max_start = seq_len - total_len
+    if max_start <= 0:
+        return 0
+    return (max_start + stride - 1) // stride
+
+
+def _load_sequences_for_samples(ds_cfg: DatasetCfg, min_samples: int) -> list[tuple]:
+    metadata = get_dataset_metadata(ds_cfg.dataset)
+    node_count = int(ds_cfg.node_count or metadata["node_count"])
+    hand_groups = _resolve_hand_groups(metadata, ds_cfg)
+    files = _list_dataset_files(ds_cfg)
+    if not files:
+        raise RuntimeError(f"No data files found for dataset '{ds_cfg.dataset}'.")
+    rng = random.Random(int(ds_cfg.seed))
+    rng.shuffle(files)
+    needed = max(1, int(min_samples))
+    window_len = int(ds_cfg.input_n + ds_cfg.output_n)
+    stride = max(1, int(ds_cfg.stride))
+    total_windows = 0
+    sequences: list[tuple] = []
+    for file_path in files:
+        seqs = collect_sequences_from_files_wrist_centered(
+            [file_path],
+            node_count=node_count,
+            hand_groups=hand_groups,
+            dataset=ds_cfg.dataset,
+            time_interp=ds_cfg.time_interp,
+            window_norm=ds_cfg.window_norm,
+        )
+        if not seqs:
+            continue
+        sequences.extend(seqs)
+        for coords, _ in seqs:
+            total_windows += _window_count(coords.shape[0], window_len, stride)
+        if total_windows >= needed:
+            break
+    if not sequences:
+        raise RuntimeError(
+            f"Unable to collect sequences for dataset '{ds_cfg.dataset}' and action '{ds_cfg.action_filter}'."
+        )
+    return sequences
+
+
 def _build_history_loader(
     ds_cfg: DatasetCfg,
     *,
     loader_batch_size: int,
     data_seed: int,
+    min_samples: int,
 ) -> DataLoader:
-    train_dataset, _, _ = build_datasets(ds_cfg)
+    metadata = get_dataset_metadata(ds_cfg.dataset)
+    sequences = _load_sequences_for_samples(ds_cfg, min_samples)
+    dataset_cls = metadata["dataset_cls"]
+    history_dataset = dataset_cls(
+        sequences,
+        input_n=ds_cfg.input_n,
+        output_n=ds_cfg.output_n,
+        stride=ds_cfg.stride,
+    )
     generator = torch.Generator()
     generator.manual_seed(int(data_seed))
     batch_size = max(1, loader_batch_size)
     return DataLoader(
-        train_dataset,
+        history_dataset,
         batch_size=batch_size,
         shuffle=True,
         drop_last=False,
@@ -215,6 +312,7 @@ def load_normalized_history_samples(
         ds_cfg,
         loader_batch_size=min(max(1, loader_batch_size), max(1, num_samples)),
         data_seed=data_seed,
+        min_samples=max(1, num_samples),
     )
     histories: list[torch.Tensor] = []
     collected = 0
@@ -256,6 +354,44 @@ def _get_first_tag(parsed: dict[str, str | None], *keys: str) -> str | None:
     return None
 
 
+def _apply_prefixed_defaults(cfg: Any, defaults: dict[str, object], prefix: str) -> None:
+    if not prefix:
+        return
+    normalized = f"{prefix}_"
+    for key, value in defaults.items():
+        if not key.startswith(normalized):
+            continue
+        attr = key[len(normalized):]
+        if not attr:
+            continue
+        setattr(cfg, attr, value)
+
+
+def _infer_branch_depth(state_dict: Mapping[str, Any]) -> int | None:
+    prefix = "branches.0.mlp.net."
+    layers: set[int] = set()
+    for key in state_dict.keys():
+        if not key.startswith(prefix):
+            continue
+        remainder = key[len(prefix):]
+        layer_idx = remainder.split(".", 1)[0]
+        if layer_idx.isdigit():
+            layers.add(int(layer_idx))
+    if layers:
+        return max(layers) + 1
+    return None
+
+
+def _align_config_with_checkpoint(cfg: Any, state_dict: Mapping[str, Any]) -> None:
+    alpha = state_dict.get("alpha")
+    if isinstance(alpha, torch.Tensor):
+        setattr(cfg, "gate_basis_size", int(alpha.shape[0]))
+        setattr(cfg, "num_gates", int(alpha.shape[1]))
+    inferred_layers = _infer_branch_depth(state_dict)
+    if inferred_layers is not None:
+        setattr(cfg, "num_layers", int(inferred_layers))
+
+
 def build_config(dataset: str, parsed_tag: dict[str, str | None], components: ModelComponents) -> Any:
     metadata = get_dataset_metadata(dataset)
     defaults = _model_defaults(components.model_key)
@@ -273,18 +409,44 @@ def build_config(dataset: str, parsed_tag: dict[str, str | None], components: Mo
     num_layers = layers_override if layers_override is not None else defaults.get("num_layers")
     if num_layers is None:
         num_layers = 6
+    use_norm = coerce_bool(defaults.get("simlpe_use_norm"), True)
+    use_spatial_fc_only = coerce_bool(defaults.get("simlpe_use_spatial_fc_only"), False)
+    mix_spatial_temporal = coerce_bool(defaults.get("simlpe_mix_spatial_temporal"), False)
+    add_last_offset = coerce_bool(defaults.get("simlpe_add_last_offset"), True)
+    padding_override = defaults.get(f"{components.model_key}_padding_mode")
+    padding_mode = None if padding_override is None else str(padding_override)
+    padding_predictor_raw = defaults.get(f"{components.model_key}_padding_predictor")
+    padding_predictor = (
+        "mlp" if padding_predictor_raw is None else str(padding_predictor_raw)
+    )
+    padding_full_horizon = coerce_bool(
+        defaults.get(f"{components.model_key}_padding_full_horizon"), False
+    )
+    force_mlp_padding = coerce_bool(
+        defaults.get(f"{components.model_key}_force_mlp_padding"), True
+    )
     cfg_kwargs = {
         "input_length": input_length,
         "pred_length": pred_length,
         "num_nodes": int(metadata["node_count"]),
         "hidden_dim": hidden_dim,
         "num_layers": int(num_layers),
+        "use_norm": use_norm,
+        "use_spatial_fc_only": use_spatial_fc_only,
+        "mix_spatial_temporal": mix_spatial_temporal,
+        "add_last_offset": add_last_offset,
+        "force_mlp_padding": force_mlp_padding,
         "norm_axis": norm_axis,
         "dct_components": dct_override if dct_override is not None else defaults.get("dct_keep_coeffs"),
         "mid_gate_max": coerce_float(gate_override, float(defaults.get("simlpe_mid_gate_max", 0.9))),
         "mask_temperature": coerce_float(mask_source, float(defaults.get("simlpe_mask_temperature", 1.0))),
+        "padding_mode": padding_mode,
+        "padding_predictor": padding_predictor,
+        "padding_full_horizon": padding_full_horizon,
     }
-    return components.config_cls(**cfg_kwargs)
+    cfg = components.config_cls(**cfg_kwargs)
+    _apply_prefixed_defaults(cfg, defaults, components.model_key)
+    return cfg
 
 
 def list_actions(model_dir: Path, model: str, dataset: str, explicit: Sequence[str] | None) -> list[str]:
@@ -325,13 +487,15 @@ def inspect_checkpoint(
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     metadata = checkpoint.get("metadata", {})
     parsed_tag = parse_tag(metadata.get("tag"))
-    cfg = build_config(dataset, parsed_tag, components)
-
-    forecaster = components.forecaster_cls(cfg)
     state_dict = checkpoint.get("best_model_state", checkpoint)
     # Optional wrapper handling
     if isinstance(state_dict, dict) and "sfgdnet_try" in state_dict:
         state_dict = state_dict["sfgdnet_try"]
+    cfg = build_config(dataset, parsed_tag, components)
+    if isinstance(state_dict, Mapping):
+        _align_config_with_checkpoint(cfg, state_dict)
+
+    forecaster = components.forecaster_cls(cfg)
     forecaster.load_state_dict(state_dict)
     forecaster.eval()
 

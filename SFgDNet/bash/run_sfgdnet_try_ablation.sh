@@ -4,8 +4,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${PYTHON:-python3}"
-ABLATION_SCRIPT="${SCRIPT_DIR}/ablation_architecture_simlpe.py"
+ABLATION_SCRIPT="${REPO_ROOT}/ablation_architecture_simlpe.py"
 
 DATASET="${DATASET:-assembly}"
 WINDOW="${WINDOW:-70}"

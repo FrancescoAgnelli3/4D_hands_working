@@ -171,7 +171,8 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "simlpe_mid_gate_max": 0.5,
         "epochs": 100,
         "num_layers": 4,
-        "sfgdnet_try_lambda_l1": 1e-2
+        "sfgdnet_try_lambda_l1": 1e-2,
+        "sfgdnet_try_num_gates": 6,
     },
     "trajdep": {
         "model": "trajdep",
@@ -197,7 +198,7 @@ class DatasetCfg:
     action_filter: str = "pick_up_screwd"
     input_n: int = 90
     output_n: int = 10
-    stride: int = 1
+    stride: int = 5
     time_interp: Optional[int] = None
     window_norm: Optional[int] = None
     batch_size: int = 128
@@ -296,7 +297,7 @@ class TrainCfg:
     sfgdnet_try_learn_centers: Optional[bool] = None
     sfgdnet_try_fixed_lambda: Optional[float] = None
     sfgdnet_try_fixed_centers: Optional[Tuple[float, float]] = None
-    sfgdnet_try_num_gates: Optional[int] = None
+    sfgdnet_try_num_gates: Optional[int] = 6
     sfgdnet_try_gate_basis_degree: Optional[int] = None
     sfgdnet_try_gate_basis_size: Optional[int] = None
     sfgdnet_try_num_layers: Optional[int] = None
@@ -323,7 +324,7 @@ def build_argument_parser(base_dir: str, default_data_dir: str) -> argparse.Argu
     ap.add_argument("--time-interp", type=int, default=None)
     ap.add_argument("--window-norm", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=512)
-    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--wrist-indices", type=str, default="", help="Comma-separated left and right wrist indices (zero-based). Uses dataset defaults when omitted.")
 
     # Ablation grids
@@ -351,7 +352,7 @@ def build_argument_parser(base_dir: str, default_data_dir: str) -> argparse.Argu
     ap.add_argument(
         "--sfgdnet-try-num-layers",
         type=str,
-        default="48, 64",
+        default="1, 2, 4, 6, 8",
         help="Comma-separated expert depths for sfgdnet_try mixtures (num_layers override).",
     )
     ap.add_argument("--epochs", type=int, default=100)

@@ -20,6 +20,9 @@ from train_best_models import (
     _prepare_result_row,
 )
 
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_RESULTS_ROOT = os.path.join(REPO_ROOT, "out", "ablation")
+
 
 def _parse_comma_list(raw: Optional[str]) -> Optional[List[str]]:
     if raw is None:
@@ -111,16 +114,6 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                     "dct_keep_coeffs": _full_sequence_override,
                 },
             ),
-            _make_scenario(
-                name="A2_dct_single_expert",
-                description="Enables DCT but still uses a single expert, testing whether the DCT transform alone adds value.",
-                groups=("A", "dct"),
-                overrides={
-                    "sfgdnet_try_skip_dct": False,
-                    "sfgdnet_try_num_gates": 1,
-                    "dct_keep_coeffs": _constant_override(default_dct_len),
-                },
-            ),
         ]
     )
 
@@ -170,10 +163,22 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 overrides={"sfgdnet_try_num_gates": 2},
             ),
             _make_scenario(
+                name="C3_four_experts",
+                description="Intermediate mixture capacity with four experts.",
+                groups=("C", "experts"),
+                overrides={"sfgdnet_try_num_gates": 4},
+            ),
+            _make_scenario(
                 name="C4_six_experts",
-                description="Tests whether additional experts saturate or degrade performance through overspecialization.",
+                description="Matches the default configuration to test whether it remains optimal in this grid.",
                 groups=("C", "experts"),
                 overrides={"sfgdnet_try_num_gates": 6},
+            ),
+            _make_scenario(
+                name="C5_eight_experts",
+                description="Expands capacity further to probe diminishing returns with many experts.",
+                groups=("C", "experts"),
+                overrides={"sfgdnet_try_num_gates": 8},
             ),
         ]
     )
@@ -375,7 +380,7 @@ def main() -> None:
     parser.add_argument("--seeds", type=str, default=None, help="Comma-separated list of seeds.")
     parser.add_argument("--epochs", type=int, default=None, help="Optional epoch override for all runs.")
     parser.add_argument("--scenarios", type=str, default=None, help="Comma list of ablation scenario names to run.")
-    parser.add_argument("--results-root", type=str, default=os.path.join("out", "ablation"), help="Root directory for ablation CSVs.")
+    parser.add_argument("--results-root", type=str, default=DEFAULT_RESULTS_ROOT, help="Root directory for ablation CSVs.")
     parser.add_argument("--results-name", type=str, default="results.csv", help="Filename for the results CSV (before window/horizon suffix).")
     parser.add_argument("--save-root", type=str, default=os.path.join(DEFAULT_SAVE_ROOT, "architecture"), help="Root for model checkpoints.")
     parser.add_argument("--log-wandb", action="store_true", help="Enable Weights & Biases logging.")

@@ -89,10 +89,12 @@ def build_store_from_csv(
     df: pd.DataFrame,
     metric_col: str = "validation_mpjpe_norm_best",
     require_cols: tuple[str, ...] = ("model", "dataset", "input_n", "output_n"),
+    config_col: str | None = "configuration",
 ) -> dict:
     """
     Build a dict: results[(model, dataset_label, split_label)] = best_mpjpe
     Merges multiple variants into the same canonical model by taking the min MPJPE.
+    If multiple configurations exist for the same cell, the lowest-MPJPE configuration wins.
     Expects at least columns in `require_cols` and `metric_col`.
     """
     missing = [c for c in (*require_cols, metric_col) if c not in df.columns]
@@ -100,6 +102,8 @@ def build_store_from_csv(
         raise ValueError(f"CSV missing required columns: {missing}")
 
     store: dict[tuple[str, str, str], float] = {}
+    has_config = bool(config_col) and config_col in df.columns
+    per_config_best: dict[tuple[str, str, str, str], float] = {}
 
     for _, row in df.iterrows():
         # canonical model
@@ -124,6 +128,20 @@ def build_store_from_csv(
             mpjpe = float(row[metric_col])
         except Exception:
             continue
+
+        config_val = None
+        if has_config:
+            raw_cfg = row.get(config_col)
+            if isinstance(raw_cfg, str):
+                config_val = raw_cfg.strip() or None
+            elif pd.notna(raw_cfg):
+                config_val = str(raw_cfg)
+
+            cfg_key = (model, dataset_label, split_label, (config_val or "__NO_CFG__"))
+            prev_cfg_best = per_config_best.get(cfg_key)
+            if prev_cfg_best is not None and mpjpe >= prev_cfg_best:
+                continue
+            per_config_best[cfg_key] = mpjpe
 
         key = (model, dataset_label, split_label)
         if key not in store or mpjpe < store[key]:
@@ -242,14 +260,22 @@ def main():
         )
     )
     parser.add_argument(
-        "--csv", 
-        default="/home/agnelli/projects/4D_hands_working/SFgDNet/out/best_runs/aggregate.csv", 
-        help="Path to input CSV (single file with all results)."
+        "--csv",
+        default="/home/agnelli/projects/4D_hands_working/SFgDNet/out/best_runs/aggregate.csv",
+        help="Path to input CSV (single file with all results).",
     )
     parser.add_argument(
         "--metric-col",
         default="validation_mpjpe_norm_best",
         help="Column name for MPJPE metric (default: validation_mpjpe_norm_best).",
+    )
+    parser.add_argument(
+        "--config-col",
+        default="configuration",
+        help=(
+            "Optional configuration identifier column. When multiple configurations exist for the "
+            "same model/dataset/split, the lowest-MPJPE configuration is used (default: configuration)."
+        ),
     )
     parser.add_argument(
         "--digits",
@@ -275,7 +301,8 @@ def main():
     df = pd.read_csv(args.csv)
 
     # Build store (min over variants per canonical model/dataset/split)
-    store = build_store_from_csv(df, metric_col=args.metric_col)
+    config_col = args.config_col.strip() or None
+    store = build_store_from_csv(df, metric_col=args.metric_col, config_col=config_col)
 
     # Render LaTeX
     latex = render_three_dataset_table(store, digits=args.digits, scale_h2o=args.scale_h2o)

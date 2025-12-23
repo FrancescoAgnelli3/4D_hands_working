@@ -3,6 +3,7 @@ set -u  # keep strict undefined-variable checking
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${PYTHON:-python3}"
 
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || { echo "Python '${PYTHON_BIN}' not found" >&2; exit 1; }
@@ -12,7 +13,7 @@ TIME_SPLITS=("70 : 30")
 ALLOW_EQUAL_WINDOW_HORIZON=false
 
 ASSEMBLY_ACTION_FILTERS=("pick" "put" "remove" "unscrew" "rotate" "attempt")
-ABLATION_SCRIPT="${SCRIPT_DIR}/ablation_study.py"
+ABLATION_SCRIPT="${REPO_ROOT}/ablation_study.py"
 MODEL="sfgdnet_try"
 
 for dataset in "${DATASETS[@]}"; do

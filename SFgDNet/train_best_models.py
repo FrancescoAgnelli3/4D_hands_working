@@ -9,10 +9,11 @@ from data import build_datasets, get_dataset_metadata, make_loaders
 from runner import run_experiment
 
 
-BEST_MODELS_PATH = os.path.join("out", "best_runs", "assembly/best_models.json")
-BEST_RESULTS_PATH = os.path.join("out", "best_runs", "results.csv")
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+BEST_MODELS_PATH = os.path.join(REPO_ROOT, "out", "best_runs", "assembly", "best_models.json")
+BEST_RESULTS_PATH = os.path.join(REPO_ROOT, "out", "best_runs", "results.csv")
 DEFAULT_DATA_DIR = ""
-DEFAULT_SAVE_ROOT = os.path.join("out", "best_runs", "checkpoints")
+DEFAULT_SAVE_ROOT = os.path.join(REPO_ROOT, "out", "best_runs", "checkpoints")
 
 FIELDNAMES = [
     "timestamp",
@@ -107,7 +108,7 @@ def _build_dataset_cfg(
     output_n = (
         horizon_override if horizon_override is not None else _coerce_required(best_cfg.get("output_n"), int, default=10)
     )
-    stride = _coerce_required(best_cfg.get("stride"), int, default=1)
+    stride = _coerce_required(best_cfg.get("stride"), int, default=5)
     seed = seed_override if seed_override is not None else _coerce_required(best_cfg.get("seed"), int, default=0)
     return DatasetCfg(
         data_dir=data_dir,
@@ -176,6 +177,11 @@ def _build_train_cfg(
     cfg.simlpe_fast_layers = _coerce_optional(best_cfg.get("simlpe_fast_layers"), int)
     cfg.simlpe_mid_gate_max = _coerce_optional(best_cfg.get("simlpe_mid_gate_max"), float)
     cfg.sfgdnet_try_num_layers = _coerce_optional(best_cfg.get("num_layers"), int)
+    num_gates = _coerce_optional(best_cfg.get("sfgdnet_try_num_gates"), int)
+    if num_gates is None:
+        num_gates = _coerce_optional(best_cfg.get("num_gates"), int)
+    if num_gates is not None:
+        cfg.sfgdnet_try_num_gates = num_gates
 
     return cfg
 

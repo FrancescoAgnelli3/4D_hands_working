@@ -81,6 +81,7 @@ def best_mpjpe_by_key(
     action_col: str = "action",
     input_n_col: str = "input_n",
     output_n_col: str = "output_n",
+    config_col: str | None = "configuration",
 ) -> dict:
     """
     Build a dict: results[(model, action, split_label)] = best_mpjpe
@@ -97,6 +98,8 @@ def best_mpjpe_by_key(
         raise ValueError(f"CSV missing required columns: {missing}")
 
     store: dict[tuple[str, str, str], float] = {}
+    has_config = bool(config_col) and config_col in df.columns
+    per_config_best: dict[tuple[str, str, str, str], float] = {}
 
     for _, row in df.iterrows():
         # canonical model
@@ -120,6 +123,20 @@ def best_mpjpe_by_key(
             mpjpe = float(row[metric_col])
         except Exception:
             continue
+
+        if has_config:
+            raw_cfg = row.get(config_col)
+            if isinstance(raw_cfg, str):
+                config_val = raw_cfg.strip() or None
+            elif pd.notna(raw_cfg):
+                config_val = str(raw_cfg)
+            else:
+                config_val = None
+            cfg_key = (model, action, split_label, config_val or "__NO_CFG__")
+            prev_cfg_best = per_config_best.get(cfg_key)
+            if prev_cfg_best is not None and mpjpe >= prev_cfg_best:
+                continue
+            per_config_best[cfg_key] = mpjpe
 
         key = (model, action, split_label)
         if key not in store or mpjpe < store[key]:
@@ -197,16 +214,27 @@ def render_table_block(actions: list[str], store: dict, digits: int = 3) -> str:
     return block
 
 
-def render_full_table(store: dict, digits: int = 3) -> str:
+def render_full_table(
+    store: dict,
+    digits: int = 3,
+    caption: str | None = None,
+    label: str | None = None,
+) -> str:
     block1 = render_table_block(TABLE1_ACTIONS, store, digits=digits)
     block2 = render_table_block(TABLE2_ACTIONS, store, digits=digits)
+
+    caption = (
+        caption
+        or "Comparison on the AssemblyHands dataset (MPJPE, mm). The \\textbf{best} and \\underline{second-best} results per column are highlighted. Lower is better."
+    )
+    label = label or "tab:assembly_results_competitors"
 
     full = rf"""
 \begin{{table*}}[!ht]
 \centering
 \scriptsize
-\caption{{Comparison on the AssemblyHands dataset (MPJPE, mm). The \textbf{{best}} and \underline{{second-best}} results per column are highlighted. Lower is better.}}
-\label{{tab:assembly_results_competitors}}
+\caption{{{caption}}}
+\label{{{label}}}
 
 % ---- FIRST SUBTABLE ----
 {block1}
@@ -246,6 +274,11 @@ def main():
         help="Decimal digits in table cells (default: 3).",
     )
     parser.add_argument(
+        "--cross-action",
+        action="store_true",
+        help="Use the cross-action caption/label variant for the AssemblyHands results table.",
+    )
+    parser.add_argument(
         "--out",
         default="results_assembly_competitors.txt",
         help="Output path for LaTeX table, or '-' for stdout (default: '-').",
@@ -254,6 +287,14 @@ def main():
     parser.add_argument("--action-col", default="action", help="Column name for action (default: action).")
     parser.add_argument("--input-n-col", default="input_n", help="Column name for input horizon (default: input_n).")
     parser.add_argument("--output-n-col", default="output_n", help="Column name for output horizon (default: output_n).")
+    parser.add_argument(
+        "--config-col",
+        default="configuration",
+        help=(
+            "Optional configuration identifier column. If multiple configurations exist for the same cell, "
+            "the configuration with the lowest MPJPE is used (default: configuration)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -267,8 +308,18 @@ def main():
         action_col=args.action_col,
         input_n_col=args.input_n_col,
         output_n_col=args.output_n_col,
+        config_col=(args.config_col.strip() or None),
     )
-    latex = render_full_table(store, digits=args.digits)
+    caption = None
+    label = None
+    if args.cross_action:
+        caption = (
+            "Cross--action results on the AssemblyHands dataset under a leave--one--action--out protocol. Lower is better. "
+            "The best and second--best values per column are highlighted in bold and underlined, respectively."
+        )
+        label = "tab:cross_assembly_results_competitors"
+
+    latex = render_full_table(store, digits=args.digits, caption=caption, label=label)
 
     if args.out == "-" or args.out.strip() == "":
         sys.stdout.write(latex + ("\n" if not latex.endswith("\n") else ""))

@@ -14,10 +14,11 @@ from data import build_datasets, get_dataset_metadata, make_loaders
 from runner import run_experiment
 
 
-BEST_MODELS_PATH = os.path.join("out", "best_runs", "assembly/best_models.json")
-BEST_RESULTS_PATH = os.path.join("out", "best_runs", "results_cross_action.csv")
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+BEST_MODELS_PATH = os.path.join(REPO_ROOT, "out", "best_runs", "assembly", "best_models.json")
+BEST_RESULTS_PATH = os.path.join(REPO_ROOT, "out", "best_runs", "results_cross_action.csv")
 DEFAULT_DATA_DIR = ""
-DEFAULT_SAVE_ROOT = os.path.join("out", "best_runs", "checkpoints")
+DEFAULT_SAVE_ROOT = os.path.join(REPO_ROOT, "out", "best_runs", "checkpoints")
 WINDOWS = (51, 70, 90)
 HORIZONS = (49, 30, 10)
 ALLOW_EQUAL_WINDOW_HORIZON = True
@@ -32,26 +33,12 @@ FIELDNAMES = [
     "stride",
     "batch_size",
     "hidden_size",
-    "gru_layers",
-    "t_layers",
-    "gnn_layers",
     "lr",
     "gradient_clip",
     "use_space",
     "bone_loss_weight",
     "velocity_loss_weight",
     "dct_keep_coeffs",
-    "hisrep_hand_dct_n",
-    "hisrep_dct_n",
-    "simlpe_norm_axis",
-    "simlpe_use_norm",
-    "simlpe_use_spatial_fc_only",
-    "simlpe_mix_spatial_temporal",
-    "simlpe_add_last_offset",
-    "simlpe_mask_temperature",
-    "simlpe_slow_layers",
-    "simlpe_fast_layers",
-    "simlpe_mid_gate_max",
     "epochs",
     "params",
     "train_mpjpe_best",
@@ -60,8 +47,6 @@ FIELDNAMES = [
     "validation_mpjpe_norm_best",
     "test_mpjpe_best",
     "test_mpjpe_norm_best",
-    "train_actions",
-    "withheld_action",
 ]
 
 DEFAULT_EPOCHS = 100
@@ -141,7 +126,7 @@ def _build_dataset_cfg(
     output_n = (
         horizon_override if horizon_override is not None else _coerce_required(best_cfg.get("output_n"), int, default=10)
     )
-    stride = _coerce_required(best_cfg.get("stride"), int, default=1)
+    stride = _coerce_required(best_cfg.get("stride"), int, default=5)
     seed = seed_override if seed_override is not None else _coerce_required(best_cfg.get("seed"), int, default=0)
     return DatasetCfg(
         data_dir=data_dir,
@@ -205,6 +190,11 @@ def _build_train_cfg(best_cfg: Dict[str, object], *, model_name: Optional[str] =
     cfg.sfgdnet_try_num_layers = _coerce_optional(best_cfg.get("sfgdnet_try_num_layers"), int)
     if target_model == "sfgdnet_try" and cfg.sfgdnet_try_num_layers is None:
         cfg.sfgdnet_try_num_layers = 32
+    num_gates = _coerce_optional(best_cfg.get("sfgdnet_try_num_gates"), int)
+    if num_gates is None:
+        num_gates = _coerce_optional(best_cfg.get("num_gates"), int)
+    if num_gates is not None:
+        cfg.sfgdnet_try_num_gates = num_gates
 
     return cfg
 
@@ -280,14 +270,8 @@ def _stable_seed(base_seed: int, dataset: str, window: int, horizon: int) -> int
     return (base_seed + dataset_sum + window * 10007 + horizon * 1009) % (2**32)
 
 
-def _prepare_result_row(
-    ds_cfg: DatasetCfg,
-    train_cfg: TrainCfg,
-    metrics: Dict[str, float],
-    train_actions: Sequence[str],
-    test_action: str,
-) -> Dict[str, object]:
-    row = {
+def _prepare_result_row(ds_cfg: DatasetCfg, train_cfg: TrainCfg, metrics: Dict[str, float]) -> Dict[str, object]:
+    base = {
         "timestamp": int(time.time()),
         "model": train_cfg.model,
         "dataset": ds_cfg.dataset,
@@ -297,26 +281,12 @@ def _prepare_result_row(
         "stride": ds_cfg.stride,
         "batch_size": ds_cfg.batch_size,
         "hidden_size": train_cfg.hidden_size,
-        "gru_layers": train_cfg.gru_layers,
-        "t_layers": train_cfg.t_layers,
-        "gnn_layers": train_cfg.gnn_layers,
         "lr": train_cfg.lr,
         "gradient_clip": train_cfg.gradient_clip,
         "use_space": int(train_cfg.use_space),
         "bone_loss_weight": train_cfg.bone_loss_weight,
         "velocity_loss_weight": train_cfg.velocity_loss_weight,
         "dct_keep_coeffs": train_cfg.dct_keep_coeffs,
-        "hisrep_hand_dct_n": train_cfg.hisrep_hand_dct_n,
-        "hisrep_dct_n": train_cfg.hisrep_dct_n,
-        "simlpe_norm_axis": train_cfg.simlpe_norm_axis,
-        "simlpe_use_norm": train_cfg.simlpe_use_norm,
-        "simlpe_use_spatial_fc_only": train_cfg.simlpe_use_spatial_fc_only,
-        "simlpe_mix_spatial_temporal": train_cfg.simlpe_mix_spatial_temporal,
-        "simlpe_add_last_offset": train_cfg.simlpe_add_last_offset,
-        "simlpe_mask_temperature": train_cfg.simlpe_mask_temperature,
-        "simlpe_slow_layers": train_cfg.simlpe_slow_layers,
-        "simlpe_fast_layers": train_cfg.simlpe_fast_layers,
-        "simlpe_mid_gate_max": train_cfg.simlpe_mid_gate_max,
         "epochs": train_cfg.epochs,
         "params": metrics.get("params", 0),
         "train_mpjpe_best": metrics.get("train_mpjpe_best"),
@@ -325,9 +295,12 @@ def _prepare_result_row(
         "validation_mpjpe_norm_best": metrics.get("validation_mpjpe_norm_best"),
         "test_mpjpe_best": metrics.get("test_mpjpe_best"),
         "test_mpjpe_norm_best": metrics.get("test_mpjpe_norm_best"),
-        "train_actions": ",".join(train_actions),
-        "withheld_action": test_action,
     }
+
+    row: Dict[str, object] = {}
+    for field in FIELDNAMES:
+        value = base.get(field)
+        row[field] = "" if value is None else value
     return row
 
 
@@ -554,7 +527,7 @@ def main():
                 if metrics is None:
                     raise RuntimeError("Training failed to produce metrics.")
 
-                row = _prepare_result_row(train_ds_cfg, train_cfg, metrics, train_actions, test_action)
+                row = _prepare_result_row(train_ds_cfg, train_cfg, metrics)
                 _write_results_row(results_csv_path, row)
                 print(
                     f"Recorded cross-action results for {model_name}: test_action='{test_action}', window={current_window}, horizon={current_horizon}",
