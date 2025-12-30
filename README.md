@@ -1,8 +1,8 @@
-# SFgDNet: Slow–Fast Gated DCT for 3D Hand Motion Forecasting
+# SplineEqNet: Slow–Fast Gated DCT for 3D Hand Motion Forecasting
 
-This repository hosts the code accompanying the CVPR 2026 submission *“SFgDNet: A Lightweight Architecture for 3D Hand Motion Forecasting via Slow–Fast Gated DCT Modeling.”* The codebase contains every component needed to reproduce the ablations, retraining runs, qualitative analyses, and figure/table generation reported in the paper.
+This repository hosts the code accompanying the PRL submission *“SplineEQNet: Frequency-Equalized Deterministic Forecasting of 3D Hand Articulation”* The codebase contains every component needed to reproduce the ablations, retraining runs, qualitative analyses, and figure/table generation reported in the paper.
 
-![Architecture of SFgDNet](model.png)
+![Architecture of SplineEqNet](model.png)
 
 ## Repository layout
 
@@ -29,14 +29,7 @@ This repository hosts the code accompanying the CVPR 2026 submission *“SFgDNet
 
 ## Datasets & preprocessing
 
-`SplineEqNet/data.py` and `SplineEqNet/datasets.py` describe the wrist indices, bone graphs, and defaults for every supported dataset:
-
-| Dataset key | Description | Default root (`data.py`) |
-|-------------|-------------|--------------------------|
-| `assembly`  | AssemblyHands / 4D Hands sequences with dual-hand skeletons (42 nodes). | `/mnt/turing-datasets/AssemblyHands/assembly101-download-scripts/data_our/` |
-| `h2o`       | H2O egocentric manipulations, 42-node skeletons. | `/mnt/turing-datasets/h2o/` |
-| `bighands`  | BigHand2.2M (single-hand, 21 nodes). | `/mnt/turing-datasets/BigHands/BigHand2.2M/data/` |
-| `fpha`      | First-Person Hand Action dataset (single-hand, 21 nodes). | `/mnt/turing-datasets/FPHA/data/` |
+`SplineEqNet/data.py` and `SplineEqNet/datasets.py` describe the wrist indices, bone graphs, and defaults for every supported dataset.
 
 Key behaviors:
 
@@ -49,23 +42,23 @@ Key behaviors:
 
 ### 1. Hyper-parameter sweeps — `SplineEqNet/ablation_study.py`
 
-Sweeps across models (`DEFAULT_MODELS` covers `last`, `hisrep`, `eqmotion`, `simlpe_dct`, `SFgDNet`, `SplineEqNet`, `mpt`, `estag`, `hstgcnn`, `trajdep`, `pgbig`, `motionmixer`, …) and grid-searches all relevant knobs (hidden size, GRU layers, learning rates, SiMLPe-specific gates, etc.).
+Sweeps across models (`DEFAULT_MODELS` covers `last`, `hisrep`, `eqmotion`, `simlpe_dct`, `SplineEqNet`, `SplineEqNet`, `mpt`, `estag`, `hstgcnn`, `trajdep`, `pgbig`, `motionmixer`, …) and grid-searches all relevant knobs (hidden size, GRU layers, learning rates, SiMLPe-specific gates, etc.).
 
 ```bash
 uv run python SplineEqNet/ablation_study.py \
   --dataset assembly \
   --data-dir /path/to/assembly \
-  --models SFgDNet,SplineEqNet,mpt \
+  --models SplineEqNet,SplineEqNet,mpt \
   --hidden-sizes 32,64 \
   --epochs 100 \
   --save-eval-examples \
-  --save-SFgDNet-mask --save-SFgDNet-gates
+  --save-SplineEqNet-mask --save-SplineEqNet-gates
 ```
 
 - Results live at `SplineEqNet/out/ablation/<dataset>/<action>/results.csv` (customize via `--save-root` / `--csv`).
 - The script tracks every config signature, so re-running the same grid skips completed rows.
 - `--preset` selects coarse (`basic`), extended, or full grids; `--max-runs` caps the total combination count for smoke tests.
-- Enable logging via `--log-wandb --wandb-project <name>`; gate/mask dumps land under `out/ablation/.../SplineEqNet_masks` (or `SFgDNet_masks`) plus `SplineEqNet/examples/gate_*.pt`.
+- Enable logging via `--log-wandb --wandb-project <name>`; gate/mask dumps land under `out/ablation/.../SplineEqNet_masks` (or `SplineEqNet_masks`) plus `SplineEqNet/examples/gate_*.pt`.
 
 ### 2. Architecture scenarios — `SplineEqNet/ablation_architecture_simlpe.py`
 
@@ -93,10 +86,10 @@ Re-runs the champion configs discovered during sweeps (pulled from `out/best_run
 ```bash
 uv run python SplineEqNet/train_best_models.py \
   --dataset assembly \
-  --model SFgDNet \
+  --model SplineEqNet \
   --data-dir /path/to/assembly \
   --save-root SplineEqNet/out/best_runs/checkpoints \
-  --save-SFgDNet-mask --save-SFgDNet-gates \
+  --save-SplineEqNet-mask --save-SplineEqNet-gates \
   --log-wandb
 ```
 
@@ -114,7 +107,7 @@ uv run python SplineEqNet/train_cross_action_models.py \
   --data-dir /path/to/assembly \
   --actions attempt,rotate,remove,unscrew,pick \
   --test-action remove \
-  --model SFgDNet,SplineEqNet \
+  --model SplineEqNet,SplineEqNet \
   --samples-per-action 600 \
   --window 70 --horizon 30 \
   --save-SplineEqNet-mask --save-eval-examples
