@@ -9,7 +9,7 @@ PYTHON_BIN="${PYTHON:-python3}"
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || { echo "Python '${PYTHON_BIN}' not found" >&2; exit 1; }
 
 # Run across all datasets
-# DATASETS=("assembly" "fpha" "h2o" "bighands")
+DATASETS=("assembly" "fpha" "h2o" "bighands")
 DATASETS=("h2o" "bighands")
 
 # Use all known assembly action filters
@@ -53,7 +53,6 @@ for dataset in "${DATASETS[@]}"; do
                 --model "${model}" \
                 --window "${window}" \
                 --horizon "${horizon}" \
-                --save-best-model \
                 "$@"; then
             echo "Run FAILED: dataset=${dataset} model=${model} action=${action_filter} window=${window} horizon=${horizon}" >&2
             # continue to next experiment

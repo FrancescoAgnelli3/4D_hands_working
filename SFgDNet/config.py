@@ -172,7 +172,7 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "epochs": 100,
         "num_layers": 4,
         "sfgdnet_try_lambda_l1": 1e-2,
-        "sfgdnet_try_num_gates": 6,
+        "sfgdnet_try_num_gates": 2,
     },
     "trajdep": {
         "model": "trajdep",

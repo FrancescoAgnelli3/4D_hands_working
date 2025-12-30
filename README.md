@@ -1,87 +1,145 @@
 # SFgDNet: Slow–Fast Gated DCT for 3D Hand Motion Forecasting
 
-This repository hosts the codebase accompanying the unpublished CVPR 2026 submission titled *“SFgDNet: A Lightweight Architecture for 3D Hand Motion Forecasting via Slow–Fast Gated DCT Modeling”*. The focus is on reproducing the SFgDNet training/evaluation workflows described in the paper and on providing the utilities used to analyze and visualize the resulting predictions.
+This repository hosts the code accompanying the CVPR 2026 submission *“SFgDNet: A Lightweight Architecture for 3D Hand Motion Forecasting via Slow–Fast Gated DCT Modeling.”* The codebase contains every component needed to reproduce the ablations, retraining runs, qualitative analyses, and figure/table generation reported in the paper.
 
 ![Architecture of SFgDNet](model.png)
 
-## Repository overview
+## Repository layout
 
-- `SFgDNet/`: primary Python package that implements SFgDNet backbones, dataset handling, and training loops.
-- `SFgDNet/out/`: default output directory for checkpoints, CSV logs, and exported prediction/target tensors.
-- `SFgDNet/run_*.sh`: convenience scripts to start common experiments (ablations, best-model retraining, cross-action evaluations).
-- `SFgDNet/visual_and_tables/`: scripts that aggregate CSV summaries and render comparative figures for the ablation study.
-## Setup
+- `SFgDNet/`: Python package that contains model definitions (`models/`), dataset builders (`data.py`, `datasets.py`), training utilities (`runner.py`, `train_utils.py`), CLI entry points, and helper notebooks/scripts.
+- `SFgDNet/out/`: default root for experiment artifacts. `out/ablation/` stores sweeps (CSV logs, checkpoints, saved tensors) and `out/best_runs/` stores best-model checkpoints plus summary tables.
+- `SFgDNet/bash/`: convenience launchers for recurring sweeps (e.g., `run_sfgdnet_try_ablation.sh`, `run_cross_action_experiments.sh`).
+- `SFgDNet/examples/`: saved predictions/targets for every baseline plus optional gate/mask dumps that feed the visualization scripts.
+- `SFgDNet/visual_and_tables/`: scripts that aggregate results, clean CSVs, and regenerate the tables/plots shown in the manuscript.
+- Top-level `pyproject.toml` + `uv.lock` pin the dependency set (Python 3.11.14, PyTorch ecosystem, torch-geometric, etc.).
 
-1. Create and activate a Python 3.11 virtual environment, then install dependencies with `uv`:
+## Environment & setup
+
+1. Use Python 3.11.14 (matches `pyproject.toml`). The repo assumes [`uv`](https://github.com/astral-sh/uv) for reproducible installs:
    ```bash
    uv install
    ```
-   This project relies on `uv` to manage reproducible environments; `uv install` reads the local manifest and installs the pinned packages into the active interpreter.
-2. Prepare the 4D Hands datasets and point the experiments to it via `--data-dir`. The default metadata files under `SFgDNet/data.py` and `SFgDNet/datasets.py` describe expected folder layouts and preprocessing variations.
-3. Ensure `SFgDNet/out/` is writeable — it stores checkpoints, CSV logs, and evaluation tensors for every workflow.
+   `uv` reads `pyproject.toml`/`uv.lock` and injects the locked dependencies into the active environment.
+2. All CLI scripts expect to be run from the repository root. Prefix commands with `uv run` (or activate the environment) to ensure the pinned dependencies are on `PYTHONPATH`:
+   ```bash
+   uv run python SFgDNet/ablation_study.py --help
+   ```
+3. Prepare dataset `.npy` dumps (Assembly Hands, H2O, FPHA, BigHands, …) and pass their directory with `--data-dir`. The loaders described below automatically split the files into train/val/test windows, normalize by wrist, and cache optional tensors.
+4. Confirm `SFgDNet/out/` is writable. Every workflow saves checkpoints, CSVs, and optional mask/gate tensors beneath that directory tree.
 
-## Workflows
+## Datasets & preprocessing
 
-### Ablation study: `SFgDNet/ablation_study.py`
+`SFgDNet/data.py` and `SFgDNet/datasets.py` describe the wrist indices, bone graphs, and defaults for every supported dataset:
 
-Sweeps combinations of window/horizon sizes, hidden dimensions, and architectural knobs to reproduce the slow/fast branch ablations from the paper. Both `SFgDNet` and the new `sfgdnet_try` variant can be selected independently.
+| Dataset key | Description | Default root (`data.py`) |
+|-------------|-------------|--------------------------|
+| `assembly`  | AssemblyHands / 4D Hands sequences with dual-hand skeletons (42 nodes). | `/mnt/turing-datasets/AssemblyHands/assembly101-download-scripts/data_our/` |
+| `h2o`       | H2O egocentric manipulations, 42-node skeletons. | `/mnt/turing-datasets/h2o/` |
+| `bighands`  | BigHand2.2M (single-hand, 21 nodes). | `/mnt/turing-datasets/BigHands/BigHand2.2M/data/` |
+| `fpha`      | First-Person Hand Action dataset (single-hand, 21 nodes). | `/mnt/turing-datasets/FPHA/data/` |
 
-```bash
-python SFgDNet/ablation_study.py --data-dir /path/to/assembly --dataset assembly --models SFgDNet,sfgdnet_try,mpt --hidden-sizes 32,64 --epochs 50
-```
+Key behaviors:
 
-Key notes:
+- Pass `--dataset`, `--data-dir`, and optional `--action-filter` to restrict which `.npy` files are loaded (actions are matched via substring). Clean subsets can also be injected by listing files in `DatasetCfg.subset_files`.
+- Wrist indices default to the values in `DATASET_METADATA`; override with `--wrist-indices` when using alternate joint layouts.
+- Windows are generated by sliding over each `T × N × 3` sequence (default stride 5). The loader performs wrist centering, optional time interpolation (`--time-interp`), and keeps per-sequence normalization factors alongside the tensors.
+- Random splits are deterministic per seed (70 % train / 10 % val / 20 % test). Set `--seed`/`--seeds` to reproduce or sweep across splits.
 
-- `--save-root` defaults to `SFgDNet/out/ablation/<dataset>` and it also controls where per-run CSV files land.
-- `--save-eval-examples` persists prediction/target tensors under `SFgDNet/out/ablation/...` for later plotting.
-- Customize grids via `--preset`, `--hidden-sizes`, `--gru-layers`, `--lrs`, `--use-space`, and other flags described inside `SFgDNet/ablation_study.py`.
-- The slow/fast gating and learnable DCT hyperparameters can be toggled via `--SFgDNet-*` flags to match the configurations from the tables in the paper.
+## Core workflows
 
-### Retrain best configs: `SFgDNet/train_best_models.py`
+### 1. Hyper-parameter sweeps — `SFgDNet/ablation_study.py`
 
-Retrains the highest-performing configurations identified during the ablations.
-
-```bash
-python SFgDNet/train_best_models.py --model SFgDNet --dataset assembly --data-dir /path/to/assembly --save-root SFgDNet/out/best_runs/checkpoints
-```
-
-- Reads `SFgDNet/out/best_runs/<dataset>/best_models.json` by default; override with `--best-json`.
-- Logs metrics to `SFgDNet/out/best_runs/results.csv` (and appended suffixes for windows/horizons).
-- Supports `--save-SFgDNet-mask`/`--save-SFgDNet-gates` and `--save-sfgdnet-try-mask`/`--save-sfgdnet-try-gates` for the gating analysis from the paper.
-- Use `--log-wandb`/`--wandb-*` flags for optional Weights & Biases logging.
-
-### Cross-action evaluation: `SFgDNet/train_cross_action_models.py`
-
-Holds out one action and evaluates transfer from the remaining actions.
+Sweeps across models (`DEFAULT_MODELS` covers `last`, `hisrep`, `eqmotion`, `simlpe_dct`, `SFgDNet`, `sfgdnet_try`, `mpt`, `estag`, `hstgcnn`, `trajdep`, `pgbig`, `motionmixer`, …) and grid-searches all relevant knobs (hidden size, GRU layers, learning rates, SiMLPe-specific gates, etc.).
 
 ```bash
-python SFgDNet/train_cross_action_models.py --actions attempt,remove,pick --test-action remove --samples-per-action 600 --data-dir /path/to/assembly
+uv run python SFgDNet/ablation_study.py \
+  --dataset assembly \
+  --data-dir /path/to/assembly \
+  --models SFgDNet,sfgdnet_try,mpt \
+  --hidden-sizes 32,64 \
+  --epochs 100 \
+  --save-eval-examples \
+  --save-SFgDNet-mask --save-SFgDNet-gates
 ```
 
-- Writes CSV logs to `SFgDNet/out/best_runs/results_cross_action.csv`.
-- Sampling reproducibility is controlled by `--seed` and `--samples-per-action`.
-- Override the swept windows/horizons with `--window`/`--horizon` when targeting specific points from the paper.
-- Each row records the withheld action via the `withheld_action` column.
+- Results live at `SFgDNet/out/ablation/<dataset>/<action>/results.csv` (customize via `--save-root` / `--csv`).
+- The script tracks every config signature, so re-running the same grid skips completed rows.
+- `--preset` selects coarse (`basic`), extended, or full grids; `--max-runs` caps the total combination count for smoke tests.
+- Enable logging via `--log-wandb --wandb-project <name>`; gate/mask dumps land under `out/ablation/.../SFgDNet_masks` (or `sfgdnet_try_masks`) plus `SFgDNet/examples/gate_*.pt`.
 
-## Visualization & summary scripts
+### 2. Architecture scenarios — `SFgDNet/ablation_architecture_simlpe.py`
 
-- `SFgDNet/visual_and_tables/generate_experiment_summaries.py`: aggregates the best-run CSVs into a single table for table reproduction.
-- `SFgDNet/load_SFgDNet.py` / `SFgDNet/load_sfgdnet_try.py`: inspect checkpoints for each variant and plot gate/mask statistics.
-- `SFgDNet/visual_and_tables/generate_ablation_summaries.py`: merges ablation results across datasets and extracts metrics needed for the slow/fast gating ablation table.
-- `SFgDNet/visual_and_tables/comparison_plot.py`: renders the model comparisons shown in the appendix (loads tensors stored under `SFgDNet/examples/` and saves figures to `SFgDNet/visual_and_tables/`).
+Implements the focused siMLPe Dual (a.k.a. `sfgdnet_try`) ablation blocks described in `SFgDNet/ablation_scenarios.txt` (Blocks A–H cover DCT usage, expert counts, padding, spline bases, gate regularization, routing, and backbone coupling). Each “scenario” applies a patch of overrides on top of the best-performing config pulled from `out/best_runs/<dataset>/best_models.json`.
 
-Run them after training to regenerate the tables and figures for manuscript updates.
+```bash
+uv run python SFgDNet/ablation_architecture_simlpe.py \
+  --dataset assembly \
+  --data-dir /path/to/assembly \
+  --action-filter pick \
+  --scenarios C1_one_expert,C3_four_experts \
+  --window 70 --horizon 30 \
+  --epochs 120 \
+  --log-wandb
+```
 
-## Tips
+- Results CSVs default to `SFgDNet/out/ablation/<dataset>/architecture/results_w{window}_h{horizon}.csv`.
+- Combine multiple `--scenarios` or leave empty to run the entire Block list. Seeds can be enumerated with `--seeds` (comma list).
+- Use `SFgDNet/bash/run_sfgdnet_try_ablation.sh` to iterate through all standard Assembly actions with consistent CLI flags.
 
-1. When adding new datasets, update `SFgDNet/datasets.py` with action metadata and window/horizon defaults.
-2. Start with `--preset basic` or `--max-runs` to get quick feedback before scaling up the ablation grid.
-3. Use the `SFgDNet/run_*.sh` wrappers to launch multi-run experiments consistently (`SFgDNet/run_ablation.sh`, `SFgDNet/run_cross_action_experiments.sh`, etc.).
+### 3. Best-model retraining — `SFgDNet/train_best_models.py`
 
-## Reproducing the paper figures
+Re-runs the champion configs discovered during sweeps (pulled from `out/best_runs/<dataset>/best_models.json`) and stores checkpoints plus summary metrics.
 
-1. Run the ablation sweeps with `--save-eval-examples`.
-2. Retrain the best configurations via `train_best_models.py` and collect the gating mask artifacts.
-3. Execute `SFgDNet/visual_and_tables/comparison_plot.py` using the saved tensors and store figures under `SFgDNet/visual_and_tables/`.
+```bash
+uv run python SFgDNet/train_best_models.py \
+  --dataset assembly \
+  --model SFgDNet \
+  --data-dir /path/to/assembly \
+  --save-root SFgDNet/out/best_runs/checkpoints \
+  --save-SFgDNet-mask --save-SFgDNet-gates \
+  --log-wandb
+```
 
-These steps mirror the order in the CVPR 2026 submission’s evaluation pipeline.
+- Metrics append to `SFgDNet/out/best_runs/results.csv` (override with `--results-csv`). Use `--best-json` to point at alternate JSON snapshots.
+- The script stores checkpoints under `SFgDNet/examples/models/` with a descriptive tag and can persist mask/gate tensors for downstream visualization.
+- `--window` / `--horizon` / `--epochs` override the JSON defaults, enabling focused re-training on specific temporal footprints.
+
+### 4. Cross-action transfer — `SFgDNet/train_cross_action_models.py`
+
+Holds out one action and trains on the remaining ones to study transfer and robustness.
+
+```bash
+uv run python SFgDNet/train_cross_action_models.py \
+  --dataset assembly \
+  --data-dir /path/to/assembly \
+  --actions attempt,rotate,remove,unscrew,pick \
+  --test-action remove \
+  --model SFgDNet,sfgdnet_try \
+  --samples-per-action 600 \
+  --window 70 --horizon 30 \
+  --save-sfgdnet-try-mask --save-eval-examples
+```
+
+- Action filters are matched against filenames; `--samples-per-action` subsamples files before splitting.
+- The script creates deterministic per-action seeds to ensure reproducible subsets.
+- Metrics are appended to `SFgDNet/out/best_runs/results_cross_action.csv` (per dataset) with suffixes describing the withheld action set.
+
+## Visualization & reporting
+
+- `visual_and_tables/generate_experiment_summaries.py`: merges the ablation CSVs into compact summary tables (window/horizon sweeps, parameter counts, metrics).
+- `visual_and_tables/generate_ablation_summaries.py`, `generate_tuning_summaries.py`, and `generate_experiment_summaries.py`: fetch best rows per model and format them for manuscripts or downstream LaTeX (see `generate_latex_table_*.py` variants).
+- `visual_and_tables/comparison_plot.py`: loads tensors from `SFgDNet/examples/` (e.g., `*_pred.pt`, `*_target.pt`) and reproduces the qualitative plots in the paper.
+- `visual_and_tables/clean_csv.py`, `remove_model_entries.py`, and helper scripts simplify CSV hygiene before aggregations.
+- `load_SFgDNet.py` and `load_sfgdnet_try.py` inspect stored checkpoints, gate tensors, and mask logits to verify the slow/fast routing behaviour.
+
+Run these scripts inside the repo root with `uv run python SFgDNet/visual_and_tables/...`. Every script accepts `--help` to show dataset/result-path overrides.
+
+## Customization tips
+
+- Model defaults live in `SFgDNet/config.py` (`MODEL_DEFAULT_CONFIGS`). Add/update entries there when introducing a new `models/*.py` backbone or when retuning an existing one.
+- `runner.py` + `train_utils.py` contain the core training loop. Both accept `TrainCfg` / `DatasetCfg` instances, so you can import them from external notebooks or scripts (`demo.ipynb` shows the typical pattern).
+- Extra models live under `SFgDNet/models/` (EqMotion, HisRep, TrajDep, MotionMixer, PG-BIG, siMLPe variants, etc.). Use their configs in `MODEL_DEFAULT_CONFIGS` to expose them to the CLI sweep scripts.
+- `SFgDNet/bash/` scripts orchestrate repeatable experiments without manually typing long CLI invocations.
+- All workflows support Weights & Biases logging (`--log-wandb`, `--wandb-project`, `--wandb-entity`, `--wandb-run-prefix`) plus artifact export flags (`--save-eval-examples`, `--save-*-mask`, `--save-*-gates`), making it easy to replicate every figure/table from the paper.
+
+With the dataset folders prepared and the environment installed, running the ablation sweeps → best-model retraining → visualization scripts in the order above reproduces the manuscript results end-to-end.
