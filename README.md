@@ -6,11 +6,11 @@ This repository hosts the code accompanying the CVPR 2026 submission *“SFgDNet
 
 ## Repository layout
 
-- `SFgDNet/`: Python package that contains model definitions (`models/`), dataset builders (`data.py`, `datasets.py`), training utilities (`runner.py`, `train_utils.py`), CLI entry points, and helper notebooks/scripts.
-- `SFgDNet/out/`: default root for experiment artifacts. `out/ablation/` stores sweeps (CSV logs, checkpoints, saved tensors) and `out/best_runs/` stores best-model checkpoints plus summary tables.
-- `SFgDNet/bash/`: convenience launchers for recurring sweeps (e.g., `run_sfgdnet_try_ablation.sh`, `run_cross_action_experiments.sh`).
-- `SFgDNet/examples/`: saved predictions/targets for every baseline plus optional gate/mask dumps that feed the visualization scripts.
-- `SFgDNet/visual_and_tables/`: scripts that aggregate results, clean CSVs, and regenerate the tables/plots shown in the manuscript.
+- `SplineEqNet/`: Python package that contains model definitions (`models/`), dataset builders (`data.py`, `datasets.py`), training utilities (`runner.py`, `train_utils.py`), CLI entry points, and helper notebooks/scripts.
+- `SplineEqNet/out/`: default root for experiment artifacts. `out/ablation/` stores sweeps (CSV logs, checkpoints, saved tensors) and `out/best_runs/` stores best-model checkpoints plus summary tables.
+- `SplineEqNet/bash/`: convenience launchers for recurring sweeps (e.g., `run_SplineEqNet_ablation.sh`, `run_cross_action_experiments.sh`).
+- `SplineEqNet/examples/`: saved predictions/targets for every baseline plus optional gate/mask dumps that feed the visualization scripts.
+- `SplineEqNet/visual_and_tables/`: scripts that aggregate results, clean CSVs, and regenerate the tables/plots shown in the manuscript.
 - Top-level `pyproject.toml` + `uv.lock` pin the dependency set (Python 3.11.14, PyTorch ecosystem, torch-geometric, etc.).
 
 ## Environment & setup
@@ -22,14 +22,14 @@ This repository hosts the code accompanying the CVPR 2026 submission *“SFgDNet
    `uv` reads `pyproject.toml`/`uv.lock` and injects the locked dependencies into the active environment.
 2. All CLI scripts expect to be run from the repository root. Prefix commands with `uv run` (or activate the environment) to ensure the pinned dependencies are on `PYTHONPATH`:
    ```bash
-   uv run python SFgDNet/ablation_study.py --help
+   uv run python SplineEqNet/ablation_study.py --help
    ```
 3. Prepare dataset `.npy` dumps (Assembly Hands, H2O, FPHA, BigHands, …) and pass their directory with `--data-dir`. The loaders described below automatically split the files into train/val/test windows, normalize by wrist, and cache optional tensors.
-4. Confirm `SFgDNet/out/` is writable. Every workflow saves checkpoints, CSVs, and optional mask/gate tensors beneath that directory tree.
+4. Confirm `SplineEqNet/out/` is writable. Every workflow saves checkpoints, CSVs, and optional mask/gate tensors beneath that directory tree.
 
 ## Datasets & preprocessing
 
-`SFgDNet/data.py` and `SFgDNet/datasets.py` describe the wrist indices, bone graphs, and defaults for every supported dataset:
+`SplineEqNet/data.py` and `SplineEqNet/datasets.py` describe the wrist indices, bone graphs, and defaults for every supported dataset:
 
 | Dataset key | Description | Default root (`data.py`) |
 |-------------|-------------|--------------------------|
@@ -47,32 +47,32 @@ Key behaviors:
 
 ## Core workflows
 
-### 1. Hyper-parameter sweeps — `SFgDNet/ablation_study.py`
+### 1. Hyper-parameter sweeps — `SplineEqNet/ablation_study.py`
 
-Sweeps across models (`DEFAULT_MODELS` covers `last`, `hisrep`, `eqmotion`, `simlpe_dct`, `SFgDNet`, `sfgdnet_try`, `mpt`, `estag`, `hstgcnn`, `trajdep`, `pgbig`, `motionmixer`, …) and grid-searches all relevant knobs (hidden size, GRU layers, learning rates, SiMLPe-specific gates, etc.).
+Sweeps across models (`DEFAULT_MODELS` covers `last`, `hisrep`, `eqmotion`, `simlpe_dct`, `SFgDNet`, `SplineEqNet`, `mpt`, `estag`, `hstgcnn`, `trajdep`, `pgbig`, `motionmixer`, …) and grid-searches all relevant knobs (hidden size, GRU layers, learning rates, SiMLPe-specific gates, etc.).
 
 ```bash
-uv run python SFgDNet/ablation_study.py \
+uv run python SplineEqNet/ablation_study.py \
   --dataset assembly \
   --data-dir /path/to/assembly \
-  --models SFgDNet,sfgdnet_try,mpt \
+  --models SFgDNet,SplineEqNet,mpt \
   --hidden-sizes 32,64 \
   --epochs 100 \
   --save-eval-examples \
   --save-SFgDNet-mask --save-SFgDNet-gates
 ```
 
-- Results live at `SFgDNet/out/ablation/<dataset>/<action>/results.csv` (customize via `--save-root` / `--csv`).
+- Results live at `SplineEqNet/out/ablation/<dataset>/<action>/results.csv` (customize via `--save-root` / `--csv`).
 - The script tracks every config signature, so re-running the same grid skips completed rows.
 - `--preset` selects coarse (`basic`), extended, or full grids; `--max-runs` caps the total combination count for smoke tests.
-- Enable logging via `--log-wandb --wandb-project <name>`; gate/mask dumps land under `out/ablation/.../SFgDNet_masks` (or `sfgdnet_try_masks`) plus `SFgDNet/examples/gate_*.pt`.
+- Enable logging via `--log-wandb --wandb-project <name>`; gate/mask dumps land under `out/ablation/.../SplineEqNet_masks` (or `SFgDNet_masks`) plus `SplineEqNet/examples/gate_*.pt`.
 
-### 2. Architecture scenarios — `SFgDNet/ablation_architecture_simlpe.py`
+### 2. Architecture scenarios — `SplineEqNet/ablation_architecture_simlpe.py`
 
-Implements the focused siMLPe Dual (a.k.a. `sfgdnet_try`) ablation blocks described in `SFgDNet/ablation_scenarios.txt` (Blocks A–H cover DCT usage, expert counts, padding, spline bases, gate regularization, routing, and backbone coupling). Each “scenario” applies a patch of overrides on top of the best-performing config pulled from `out/best_runs/<dataset>/best_models.json`.
+Implements the focused siMLPe Dual (a.k.a. `SplineEqNet`) ablation blocks described in `SplineEqNet/ablation_scenarios.txt` (Blocks A–H cover DCT usage, expert counts, padding, spline bases, gate regularization, routing, and backbone coupling). Each “scenario” applies a patch of overrides on top of the best-performing config pulled from `out/best_runs/<dataset>/best_models.json`.
 
 ```bash
-uv run python SFgDNet/ablation_architecture_simlpe.py \
+uv run python SplineEqNet/ablation_architecture_simlpe.py \
   --dataset assembly \
   --data-dir /path/to/assembly \
   --action-filter pick \
@@ -82,64 +82,64 @@ uv run python SFgDNet/ablation_architecture_simlpe.py \
   --log-wandb
 ```
 
-- Results CSVs default to `SFgDNet/out/ablation/<dataset>/architecture/results_w{window}_h{horizon}.csv`.
+- Results CSVs default to `SplineEqNet/out/ablation/<dataset>/architecture/results_w{window}_h{horizon}.csv`.
 - Combine multiple `--scenarios` or leave empty to run the entire Block list. Seeds can be enumerated with `--seeds` (comma list).
-- Use `SFgDNet/bash/run_sfgdnet_try_ablation.sh` to iterate through all standard Assembly actions with consistent CLI flags.
+- Use `SplineEqNet/bash/run_SplineEqNet_ablation.sh` to iterate through all standard Assembly actions with consistent CLI flags.
 
-### 3. Best-model retraining — `SFgDNet/train_best_models.py`
+### 3. Best-model retraining — `SplineEqNet/train_best_models.py`
 
 Re-runs the champion configs discovered during sweeps (pulled from `out/best_runs/<dataset>/best_models.json`) and stores checkpoints plus summary metrics.
 
 ```bash
-uv run python SFgDNet/train_best_models.py \
+uv run python SplineEqNet/train_best_models.py \
   --dataset assembly \
   --model SFgDNet \
   --data-dir /path/to/assembly \
-  --save-root SFgDNet/out/best_runs/checkpoints \
+  --save-root SplineEqNet/out/best_runs/checkpoints \
   --save-SFgDNet-mask --save-SFgDNet-gates \
   --log-wandb
 ```
 
-- Metrics append to `SFgDNet/out/best_runs/results.csv` (override with `--results-csv`). Use `--best-json` to point at alternate JSON snapshots.
-- The script stores checkpoints under `SFgDNet/examples/models/` with a descriptive tag and can persist mask/gate tensors for downstream visualization.
+- Metrics append to `SplineEqNet/out/best_runs/results.csv` (override with `--results-csv`). Use `--best-json` to point at alternate JSON snapshots.
+- The script stores checkpoints under `SplineEqNet/examples/models/` with a descriptive tag and can persist mask/gate tensors for downstream visualization.
 - `--window` / `--horizon` / `--epochs` override the JSON defaults, enabling focused re-training on specific temporal footprints.
 
-### 4. Cross-action transfer — `SFgDNet/train_cross_action_models.py`
+### 4. Cross-action transfer — `SplineEqNet/train_cross_action_models.py`
 
 Holds out one action and trains on the remaining ones to study transfer and robustness.
 
 ```bash
-uv run python SFgDNet/train_cross_action_models.py \
+uv run python SplineEqNet/train_cross_action_models.py \
   --dataset assembly \
   --data-dir /path/to/assembly \
   --actions attempt,rotate,remove,unscrew,pick \
   --test-action remove \
-  --model SFgDNet,sfgdnet_try \
+  --model SFgDNet,SplineEqNet \
   --samples-per-action 600 \
   --window 70 --horizon 30 \
-  --save-sfgdnet-try-mask --save-eval-examples
+  --save-SplineEqNet-mask --save-eval-examples
 ```
 
 - Action filters are matched against filenames; `--samples-per-action` subsamples files before splitting.
 - The script creates deterministic per-action seeds to ensure reproducible subsets.
-- Metrics are appended to `SFgDNet/out/best_runs/results_cross_action.csv` (per dataset) with suffixes describing the withheld action set.
+- Metrics are appended to `SplineEqNet/out/best_runs/results_cross_action.csv` (per dataset) with suffixes describing the withheld action set.
 
 ## Visualization & reporting
 
 - `visual_and_tables/generate_experiment_summaries.py`: merges the ablation CSVs into compact summary tables (window/horizon sweeps, parameter counts, metrics).
 - `visual_and_tables/generate_ablation_summaries.py`, `generate_tuning_summaries.py`, and `generate_experiment_summaries.py`: fetch best rows per model and format them for manuscripts or downstream LaTeX (see `generate_latex_table_*.py` variants).
-- `visual_and_tables/comparison_plot.py`: loads tensors from `SFgDNet/examples/` (e.g., `*_pred.pt`, `*_target.pt`) and reproduces the qualitative plots in the paper.
+- `visual_and_tables/comparison_plot.py`: loads tensors from `SplineEqNet/examples/` (e.g., `*_pred.pt`, `*_target.pt`) and reproduces the qualitative plots in the paper.
 - `visual_and_tables/clean_csv.py`, `remove_model_entries.py`, and helper scripts simplify CSV hygiene before aggregations.
-- `load_SFgDNet.py` and `load_sfgdnet_try.py` inspect stored checkpoints, gate tensors, and mask logits to verify the slow/fast routing behaviour.
+- `load_SplineEqNet.py` inspects stored checkpoints, gate tensors, and mask logits to verify the slow/fast routing behaviour.
 
-Run these scripts inside the repo root with `uv run python SFgDNet/visual_and_tables/...`. Every script accepts `--help` to show dataset/result-path overrides.
+Run these scripts inside the repo root with `uv run python SplineEqNet/visual_and_tables/...`. Every script accepts `--help` to show dataset/result-path overrides.
 
 ## Customization tips
 
-- Model defaults live in `SFgDNet/config.py` (`MODEL_DEFAULT_CONFIGS`). Add/update entries there when introducing a new `models/*.py` backbone or when retuning an existing one.
+- Model defaults live in `SplineEqNet/config.py` (`MODEL_DEFAULT_CONFIGS`). Add/update entries there when introducing a new `models/*.py` backbone or when retuning an existing one.
 - `runner.py` + `train_utils.py` contain the core training loop. Both accept `TrainCfg` / `DatasetCfg` instances, so you can import them from external notebooks or scripts (`demo.ipynb` shows the typical pattern).
-- Extra models live under `SFgDNet/models/` (EqMotion, HisRep, TrajDep, MotionMixer, PG-BIG, siMLPe variants, etc.). Use their configs in `MODEL_DEFAULT_CONFIGS` to expose them to the CLI sweep scripts.
-- `SFgDNet/bash/` scripts orchestrate repeatable experiments without manually typing long CLI invocations.
+- Extra models live under `SplineEqNet/models/` (EqMotion, HisRep, TrajDep, MotionMixer, PG-BIG, siMLPe variants, etc.). Use their configs in `MODEL_DEFAULT_CONFIGS` to expose them to the CLI sweep scripts.
+- `SplineEqNet/bash/` scripts orchestrate repeatable experiments without manually typing long CLI invocations.
 - All workflows support Weights & Biases logging (`--log-wandb`, `--wandb-project`, `--wandb-entity`, `--wandb-run-prefix`) plus artifact export flags (`--save-eval-examples`, `--save-*-mask`, `--save-*-gates`), making it easy to replicate every figure/table from the paper.
 
 With the dataset folders prepared and the environment installed, running the ablation sweeps → best-model retraining → visualization scripts in the order above reproduces the manuscript results end-to-end.

@@ -17,7 +17,7 @@ KEEP_COLUMNS = [
     "action",
     "dataset",
     "hidden_size",
-    "sfgdnet_try_num_layers",
+    "SplineEqNet_num_layers",
 ]
 
 TIME_SPLIT_RE = re.compile(r"w\d+_h\d+", re.IGNORECASE)
@@ -128,7 +128,7 @@ def read_rows(csv_path: Path, action_value: str, dataset: str) -> List[Dict[str,
                     "action": action_value,
                     "dataset": dataset,
                     "hidden_size": (row.get("hidden_size") or "").strip(),
-                    "sfgdnet_try_num_layers": (row.get("sfgdnet_try_num_layers") or "").strip(),
+                    "SplineEqNet_num_layers": (row.get("SplineEqNet_num_layers") or "").strip(),
                 }
             )
 
@@ -151,7 +151,7 @@ def main() -> None:
     parser.add_argument(
         "--best-runs-dir",
         type=Path,
-        default=Path("/home/agnelli/projects/4D_hands_working/SFgDNet/out/ablation"),
+        default=Path("/home/agnelli/projects/4D_hands_working/SplineEqNet/out/ablation"),
         help="Directory that contains dataset subfolders.",
     )
     parser.add_argument(

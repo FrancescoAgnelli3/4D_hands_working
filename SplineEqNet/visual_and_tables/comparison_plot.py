@@ -16,7 +16,7 @@ OUT_DIR  = os.path.join(current_dir,"visual_and_tables")
 
 MODELS = [
     "last","hisrep","simlpe_dct","mpt",
-    "estag","hstgcnn","trajdep","pgbig","motionmixer","eqmotion","SFgDNet","sfgdnet_try"
+    "estag","hstgcnn","trajdep","pgbig","motionmixer","eqmotion","SFgDNet","SplineEqNet"
 ]
 PRED_SUFFIX = "_pred.pt"
 TARGET_PATH = os.path.join(BASE_DIR, "last_target.pt")  # shared target for all models
@@ -38,7 +38,7 @@ MIN_EXTENT = 1e-3                # minimal per-axis extent to avoid singular lim
 LABEL_MAP = {
     "simlpe_dct": "siMLPe",
     "SFgDNet": "SFGdNet",
-    "sfgdnet_try": "SFGdNet-Try",
+    "SplineEqNet": "SplineEqNet",
     "last": "Last",
     "hisrep": "HisRep",
     "mpt": "MPT",

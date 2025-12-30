@@ -180,16 +180,16 @@ def run_experiment(
         os.makedirs(examples_dir, exist_ok=True)
         gate_path = os.path.join(examples_dir, f"gate_slow_and_fast.pt")
         config["SFgDNet_gate_path"] = gate_path
-    if train_cfg.save_sfgdnet_try_mask:
-        mask_dir = os.path.join(save_root, "sfgdnet_try_masks")
+    if train_cfg.save_SplineEqNet_mask:
+        mask_dir = os.path.join(save_root, "SplineEqNet_masks")
         os.makedirs(mask_dir, exist_ok=True)
         mask_path = os.path.join(mask_dir, f"{tag}_mask.pt")
-        config["sfgdnet_try_mask_path"] = mask_path
-    if train_cfg.save_sfgdnet_try_gates:
+        config["SplineEqNet_mask_path"] = mask_path
+    if train_cfg.save_SplineEqNet_gates:
         examples_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "examples")
         os.makedirs(examples_dir, exist_ok=True)
         gate_path = os.path.join(examples_dir, f"gate_slow_and_fast_try.pt")
-        config["sfgdnet_try_gate_path"] = gate_path
+        config["SplineEqNet_gate_path"] = gate_path
     if train_cfg.SFgDNet_fixed_mask is not None:
         config["SFgDNet_fixed_mask"] = float(train_cfg.SFgDNet_fixed_mask)
     if train_cfg.SFgDNet_freeze_gate:
@@ -218,48 +218,48 @@ def run_experiment(
         config["SFgDNet_fixed_lambda"] = float(train_cfg.SFgDNet_fixed_lambda)
     if train_cfg.SFgDNet_fixed_centers is not None:
         config["SFgDNet_fixed_centers"] = tuple(float(v) for v in train_cfg.SFgDNet_fixed_centers)
-    if train_cfg.sfgdnet_try_fixed_mask is not None:
-        config["sfgdnet_try_fixed_mask"] = float(train_cfg.sfgdnet_try_fixed_mask)
-    if train_cfg.sfgdnet_try_freeze_gate:
-        config["sfgdnet_try_freeze_gate"] = True
-    if train_cfg.sfgdnet_try_disable_slow_branch:
-        config["sfgdnet_try_disable_slow_branch"] = True
-    if train_cfg.sfgdnet_try_disable_fast_branch:
-        config["sfgdnet_try_disable_fast_branch"] = True
-    if train_cfg.sfgdnet_try_fixed_mid_gate is not None:
-        config["sfgdnet_try_fixed_mid_gate"] = float(train_cfg.sfgdnet_try_fixed_mid_gate)
-    if train_cfg.sfgdnet_try_skip_dct:
-        config["sfgdnet_try_skip_dct"] = True
-    if train_cfg.sfgdnet_try_padding_mode is not None:
-        config["sfgdnet_try_padding_mode"] = str(train_cfg.sfgdnet_try_padding_mode)
-    if train_cfg.sfgdnet_try_force_mlp_padding is not None:
-        config["sfgdnet_try_force_mlp_padding"] = bool(train_cfg.sfgdnet_try_force_mlp_padding)
-    if train_cfg.sfgdnet_try_padding_predictor is not None:
-        config["sfgdnet_try_padding_predictor"] = str(train_cfg.sfgdnet_try_padding_predictor)
-    if train_cfg.sfgdnet_try_padding_full_horizon is not None:
-        config["sfgdnet_try_padding_full_horizon"] = bool(train_cfg.sfgdnet_try_padding_full_horizon)
-    if train_cfg.sfgdnet_try_learn_lambda is not None:
-        config["sfgdnet_try_learn_lambda"] = bool(train_cfg.sfgdnet_try_learn_lambda)
-    if train_cfg.sfgdnet_try_learn_centers is not None:
-        config["sfgdnet_try_learn_centers"] = bool(train_cfg.sfgdnet_try_learn_centers)
-    if train_cfg.sfgdnet_try_fixed_lambda is not None:
-        config["sfgdnet_try_fixed_lambda"] = float(train_cfg.sfgdnet_try_fixed_lambda)
-    if train_cfg.sfgdnet_try_fixed_centers is not None:
-        config["sfgdnet_try_fixed_centers"] = tuple(float(v) for v in train_cfg.sfgdnet_try_fixed_centers)
-    if train_cfg.sfgdnet_try_num_gates is not None:
-        config["sfgdnet_try_num_gates"] = int(train_cfg.sfgdnet_try_num_gates)
-    if train_cfg.sfgdnet_try_gate_basis_degree is not None:
-        config["sfgdnet_try_gate_basis_degree"] = int(train_cfg.sfgdnet_try_gate_basis_degree)
-    if train_cfg.sfgdnet_try_gate_basis_size is not None:
-        config["sfgdnet_try_gate_basis_size"] = int(train_cfg.sfgdnet_try_gate_basis_size)
-    if train_cfg.sfgdnet_try_num_layers is not None:
-        config["sfgdnet_try_num_layers"] = int(train_cfg.sfgdnet_try_num_layers)
-    if train_cfg.sfgdnet_try_lambda_l1 is not None:
-        config["sfgdnet_try_lambda_l1"] = float(train_cfg.sfgdnet_try_lambda_l1)
-    if train_cfg.sfgdnet_try_lambda_div is not None:
-        config["sfgdnet_try_lambda_div"] = float(train_cfg.sfgdnet_try_lambda_div)
-    if train_cfg.sfgdnet_try_routing is not None:
-        config["sfgdnet_try_routing"] = str(train_cfg.sfgdnet_try_routing)
+    if train_cfg.SplineEqNet_fixed_mask is not None:
+        config["SplineEqNet_fixed_mask"] = float(train_cfg.SplineEqNet_fixed_mask)
+    if train_cfg.SplineEqNet_freeze_gate:
+        config["SplineEqNet_freeze_gate"] = True
+    if train_cfg.SplineEqNet_disable_slow_branch:
+        config["SplineEqNet_disable_slow_branch"] = True
+    if train_cfg.SplineEqNet_disable_fast_branch:
+        config["SplineEqNet_disable_fast_branch"] = True
+    if train_cfg.SplineEqNet_fixed_mid_gate is not None:
+        config["SplineEqNet_fixed_mid_gate"] = float(train_cfg.SplineEqNet_fixed_mid_gate)
+    if train_cfg.SplineEqNet_skip_dct:
+        config["SplineEqNet_skip_dct"] = True
+    if train_cfg.SplineEqNet_padding_mode is not None:
+        config["SplineEqNet_padding_mode"] = str(train_cfg.SplineEqNet_padding_mode)
+    if train_cfg.SplineEqNet_force_mlp_padding is not None:
+        config["SplineEqNet_force_mlp_padding"] = bool(train_cfg.SplineEqNet_force_mlp_padding)
+    if train_cfg.SplineEqNet_padding_predictor is not None:
+        config["SplineEqNet_padding_predictor"] = str(train_cfg.SplineEqNet_padding_predictor)
+    if train_cfg.SplineEqNet_padding_full_horizon is not None:
+        config["SplineEqNet_padding_full_horizon"] = bool(train_cfg.SplineEqNet_padding_full_horizon)
+    if train_cfg.SplineEqNet_learn_lambda is not None:
+        config["SplineEqNet_learn_lambda"] = bool(train_cfg.SplineEqNet_learn_lambda)
+    if train_cfg.SplineEqNet_learn_centers is not None:
+        config["SplineEqNet_learn_centers"] = bool(train_cfg.SplineEqNet_learn_centers)
+    if train_cfg.SplineEqNet_fixed_lambda is not None:
+        config["SplineEqNet_fixed_lambda"] = float(train_cfg.SplineEqNet_fixed_lambda)
+    if train_cfg.SplineEqNet_fixed_centers is not None:
+        config["SplineEqNet_fixed_centers"] = tuple(float(v) for v in train_cfg.SplineEqNet_fixed_centers)
+    if train_cfg.SplineEqNet_num_gates is not None:
+        config["SplineEqNet_num_gates"] = int(train_cfg.SplineEqNet_num_gates)
+    if train_cfg.SplineEqNet_gate_basis_degree is not None:
+        config["SplineEqNet_gate_basis_degree"] = int(train_cfg.SplineEqNet_gate_basis_degree)
+    if train_cfg.SplineEqNet_gate_basis_size is not None:
+        config["SplineEqNet_gate_basis_size"] = int(train_cfg.SplineEqNet_gate_basis_size)
+    if train_cfg.SplineEqNet_num_layers is not None:
+        config["SplineEqNet_num_layers"] = int(train_cfg.SplineEqNet_num_layers)
+    if train_cfg.SplineEqNet_lambda_l1 is not None:
+        config["SplineEqNet_lambda_l1"] = float(train_cfg.SplineEqNet_lambda_l1)
+    if train_cfg.SplineEqNet_lambda_div is not None:
+        config["SplineEqNet_lambda_div"] = float(train_cfg.SplineEqNet_lambda_div)
+    if train_cfg.SplineEqNet_routing is not None:
+        config["SplineEqNet_routing"] = str(train_cfg.SplineEqNet_routing)
     wandb_run = None
     wandb_logging_active = False
     if log_wandb:

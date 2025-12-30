@@ -15,7 +15,7 @@ from models.mpt import model_4GRU
 from models.simlpe import SiMLPeConfig, SiMLPeForecaster
 from models.simlpe_dct import SiMLPeDCTConfig, SiMLPeDCTForecaster
 from models.SFgDNet import SFgDNetConfig, SFgDNetForecaster
-from models.sfgdnet_try import SFgDNetTryConfig, SFgDNetTryForecaster
+from models.SplineEqNet import SplineEqNetConfig, SplineEqNetForecaster
 from models import hisrep as hisrep_module
 from models import hisrep_hand as hisrep_handmodule
 from models import hisrep_rigidwrist as hisrep_rigidwrist_module
@@ -99,8 +99,8 @@ def train(
         model_key = "mpt"
     if model_key == "sfgdnet":
         model = "SFgDNet"
-    elif model_key in {"sfgdnet_try", "sfgdnettry"}:
-        model = "sfgdnet_try"
+    elif model_key in {"splineeqnet"}:
+        model = "SplineEqNet"
     else:
         model = model_key
 
@@ -148,7 +148,7 @@ def train(
     learning_rate = float(lr if lr is not None else config.get("learning_rate", 1e-3))
     dct_keep_coeffs_cfg = config.get("dct_keep_coeffs")
     dct_keep_coeffs = int(dct_keep_coeffs_cfg) if dct_keep_coeffs_cfg is not None else None
-    dual_prefix = "SFgDNet" if model == "SFgDNet" else "sfgdnet_try" if model == "sfgdnet_try" else None
+    dual_prefix = "SFgDNet" if model == "SFgDNet" else "SplineEqNet" if model == "SplineEqNet" else None
     mask_save_path = config.get(f"{dual_prefix}_mask_path") if dual_prefix else None
     mask_logging_enabled = bool(mask_save_path) and dual_prefix is not None
     mask_epoch_history: List[torch.Tensor] = []
@@ -305,7 +305,7 @@ def train(
     # Build models and optimizer
     simlpe = None
     sfgdnet_model = None
-    sfgdnet_try_model = None
+    SplineEqNet_model = None
     params: List[torch.nn.Parameter] = []
     eqmotion_model = None
     trajdep = None
@@ -619,12 +619,12 @@ def train(
             forecaster_cls=SFgDNetForecaster,
             label="SFgDNetForecaster",
         )
-    elif model == "sfgdnet_try":
-        sfgdnet_try_model = _build_dual_branch_model(
-            prefix="sfgdnet_try",
-            config_cls=SFgDNetTryConfig,
-            forecaster_cls=SFgDNetTryForecaster,
-            label="SFgDNetTryForecaster",
+    elif model == "SplineEqNet":
+        SplineEqNet_model = _build_dual_branch_model(
+            prefix="SplineEqNet",
+            config_cls=SplineEqNetConfig,
+            forecaster_cls=SplineEqNetForecaster,
+            label="SplineEqNetForecaster",
         )
     elif model == "mamba":
         from models.baselines import TimeSpaceModel
@@ -692,8 +692,8 @@ def train(
         model_modules = {"simlpe_dct": simlpe_dct}
     elif model == "SFgDNet" and sfgdnet_model is not None:
         model_modules = {"SFgDNet": sfgdnet_model}
-    elif model == "sfgdnet_try" and sfgdnet_try_model is not None:
-        model_modules = {"sfgdnet_try": sfgdnet_try_model}
+    elif model == "SplineEqNet" and SplineEqNet_model is not None:
+        model_modules = {"SplineEqNet": SplineEqNet_model}
     elif model == "mamba" and 'bas' in locals():
         model_modules = {"bas": bas}
     elif model == "cde" and 'cde' in locals():
@@ -727,8 +727,8 @@ def train(
     def _get_active_dual_model() -> Optional[torch.nn.Module]:
         if model == "SFgDNet":
             return sfgdnet_model
-        if model == "sfgdnet_try":
-            return sfgdnet_try_model
+        if model == "SplineEqNet":
+            return SplineEqNet_model
         return None
 
     def _evaluate_loader(
@@ -803,7 +803,7 @@ def train(
                         recons = simlpe(in_3d)
                     elif model == "simlpe_dct":
                         recons = simlpe_dct(in_3d)
-                    elif model in ("SFgDNet", "sfgdnet_try"):
+                    elif model in ("SFgDNet", "SplineEqNet"):
                         dual_model = _get_active_dual_model()
                         if dual_model is None:
                             raise RuntimeError(f"{model} model is not initialized.")
@@ -1017,7 +1017,7 @@ def train(
             elif model == "simlpe_dct":
                 optimizer.zero_grad()
                 recons = simlpe_dct(in_3d)
-            elif model in ("SFgDNet", "sfgdnet_try"):
+            elif model in ("SFgDNet", "SplineEqNet"):
                 optimizer.zero_grad()
                 dual_model = _get_active_dual_model()
                 if dual_model is None:
@@ -1134,10 +1134,10 @@ def train(
                 else:
                     loss = mpjpe_loss
             
-            if model == "sfgdnet_try":
+            if model == "SplineEqNet":
                 reg_model = _get_active_dual_model()
-                lambda_l1 = config.get("sfgdnet_try_lambda_l1")
-                lambda_div = config.get("sfgdnet_try_lambda_div")
+                lambda_l1 = config.get("SplineEqNet_lambda_l1")
+                lambda_div = config.get("SplineEqNet_lambda_div")
                 if reg_model is not None:
                     if lambda_l1 not in (None, 0, 0.0):
                         loss = loss + reg_model.gate_usage_l1(float(lambda_l1))
@@ -1161,7 +1161,7 @@ def train(
                     "test_weighted_mae": float('nan'),
                 }
 
-            if model in ("mpt", "estag", "simlpe", "simlpe_dct", "SFgDNet", "sfgdnet_try", "trajdep", "hisrep", "hisrep_hand", "hisrep_rigidwrist", "eqmotion", "pgbig", "motionmixer", "mamba", "cde", "hstgcnn", "gwnet"):
+            if model in ("mpt", "estag", "simlpe", "simlpe_dct", "SFgDNet", "SplineEqNet", "trajdep", "hisrep", "hisrep_hand", "hisrep_rigidwrist", "eqmotion", "pgbig", "motionmixer", "mamba", "cde", "hstgcnn", "gwnet"):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(params, max_norm=float(config.get("gradient_clip", 5.0)))
                 optimizer.step()

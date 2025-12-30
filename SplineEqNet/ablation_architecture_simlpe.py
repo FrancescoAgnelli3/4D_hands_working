@@ -93,8 +93,8 @@ def _fractional_sequence_override(divisor: float):
     return _override
 
 
-def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> List[Dict[str, object]]:
-    """Return the requested Block A–H scenarios for sfgdnet_try."""
+def _build_SplineEqNet_scenarios(default_dct_len: int, default_layers: int) -> List[Dict[str, object]]:
+    """Return the requested Block A–H scenarios for SplineEqNet."""
 
     scenarios: List[Dict[str, object]] = []
     default_layers = max(1, int(default_layers))
@@ -109,8 +109,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Disables the DCT entirely and uses a single expert, testing whether the baseline time-domain model is competitive.",
                 groups=("A", "dct"),
                 overrides={
-                    "sfgdnet_try_skip_dct": True,
-                    "sfgdnet_try_num_gates": 1,
+                    "SplineEqNet_skip_dct": True,
+                    "SplineEqNet_num_gates": 1,
                     "dct_keep_coeffs": _full_sequence_override,
                 },
             ),
@@ -154,31 +154,31 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 name="C1_one_expert",
                 description="Removes the MoE; baseline single-expert model.",
                 groups=("C", "experts"),
-                overrides={"sfgdnet_try_num_gates": 1},
+                overrides={"SplineEqNet_num_gates": 1},
             ),
             _make_scenario(
                 name="C2_two_experts",
                 description="Minimal mixture; tests if two experts already help.",
                 groups=("C", "experts"),
-                overrides={"sfgdnet_try_num_gates": 2},
+                overrides={"SplineEqNet_num_gates": 2},
             ),
             _make_scenario(
                 name="C3_four_experts",
                 description="Intermediate mixture capacity with four experts.",
                 groups=("C", "experts"),
-                overrides={"sfgdnet_try_num_gates": 4},
+                overrides={"SplineEqNet_num_gates": 4},
             ),
             _make_scenario(
                 name="C4_six_experts",
                 description="Matches the default configuration to test whether it remains optimal in this grid.",
                 groups=("C", "experts"),
-                overrides={"sfgdnet_try_num_gates": 6},
+                overrides={"SplineEqNet_num_gates": 6},
             ),
             _make_scenario(
                 name="C5_eight_experts",
                 description="Expands capacity further to probe diminishing returns with many experts.",
                 groups=("C", "experts"),
-                overrides={"sfgdnet_try_num_gates": 8},
+                overrides={"SplineEqNet_num_gates": 8},
             ),
         ]
     )
@@ -191,8 +191,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="No learned padding; baseline.",
                 groups=("D", "padding"),
                 overrides={
-                    "sfgdnet_try_padding_mode": "repeat_last",
-                    "sfgdnet_try_force_mlp_padding": False,
+                    "SplineEqNet_padding_mode": "repeat_last",
+                    "SplineEqNet_force_mlp_padding": False,
                 },
             ),
             _make_scenario(
@@ -200,10 +200,10 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Predicts the full forecast horizon at once; tests whether horizon-wide padding is beneficial.",
                 groups=("D", "padding"),
                 overrides={
-                    "sfgdnet_try_padding_mode": "mlp",
-                    "sfgdnet_try_force_mlp_padding": True,
-                    "sfgdnet_try_padding_predictor": "mlp",
-                    "sfgdnet_try_padding_full_horizon": True,
+                    "SplineEqNet_padding_mode": "mlp",
+                    "SplineEqNet_force_mlp_padding": True,
+                    "SplineEqNet_padding_predictor": "mlp",
+                    "SplineEqNet_padding_full_horizon": True,
                 },
             ),
             _make_scenario(
@@ -211,10 +211,10 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Tests whether using an RNN to predict the padding frame helps.",
                 groups=("D", "padding"),
                 overrides={
-                    "sfgdnet_try_padding_mode": "mlp",
-                    "sfgdnet_try_force_mlp_padding": True,
-                    "sfgdnet_try_padding_predictor": "rnn",
-                    "sfgdnet_try_padding_full_horizon": False,
+                    "SplineEqNet_padding_mode": "mlp",
+                    "SplineEqNet_force_mlp_padding": True,
+                    "SplineEqNet_padding_predictor": "rnn",
+                    "SplineEqNet_padding_full_horizon": False,
                 },
             ),
         ]
@@ -228,8 +228,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Piecewise-constant gating; minimal capacity.",
                 groups=("E", "spline"),
                 overrides={
-                    "sfgdnet_try_gate_basis_degree": 0,
-                    "sfgdnet_try_gate_basis_size": 1,
+                    "SplineEqNet_gate_basis_degree": 0,
+                    "SplineEqNet_gate_basis_size": 1,
                 },
             ),
             _make_scenario(
@@ -237,8 +237,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Step-wise gating with higher capacity.",
                 groups=("E", "spline"),
                 overrides={
-                    "sfgdnet_try_gate_basis_degree": 0,
-                    "sfgdnet_try_gate_basis_size": 16,
+                    "SplineEqNet_gate_basis_degree": 0,
+                    "SplineEqNet_gate_basis_size": 16,
                 },
             ),
             _make_scenario(
@@ -246,8 +246,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Linear spline gating; tests usefulness of mild smoothness.",
                 groups=("E", "spline"),
                 overrides={
-                    "sfgdnet_try_gate_basis_degree": 1,
-                    "sfgdnet_try_gate_basis_size": 16,
+                    "SplineEqNet_gate_basis_degree": 1,
+                    "SplineEqNet_gate_basis_size": 16,
                 },
             ),
             _make_scenario(
@@ -255,8 +255,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Full spline gates with strong smoothness (BASELINE). Tests whether continuity is required.",
                 groups=("E", "spline"),
                 overrides={
-                    "sfgdnet_try_gate_basis_degree": 3,
-                    "sfgdnet_try_gate_basis_size": 32,
+                    "SplineEqNet_gate_basis_degree": 3,
+                    "SplineEqNet_gate_basis_size": 32,
                 },
             ),
         ]
@@ -270,8 +270,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="No regularization; baseline gate behavior.",
                 groups=("F", "regularization"),
                 overrides={
-                    "sfgdnet_try_lambda_l1": 0.0,
-                    "sfgdnet_try_lambda_div": 0.0,
+                    "SplineEqNet_lambda_l1": 0.0,
+                    "SplineEqNet_lambda_div": 0.0,
                 },
             ),
             _make_scenario(
@@ -279,8 +279,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Encourages experts to use sparse frequency regions.",
                 groups=("F", "regularization"),
                 overrides={
-                    "sfgdnet_try_lambda_l1": 1e-3,
-                    "sfgdnet_try_lambda_div": 0.0,
+                    "SplineEqNet_lambda_l1": 1e-3,
+                    "SplineEqNet_lambda_div": 0.0,
                 },
             ),
             _make_scenario(
@@ -288,8 +288,8 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 description="Encourages diversity across experts.",
                 groups=("F", "regularization"),
                 overrides={
-                    "sfgdnet_try_lambda_l1": 0.0,
-                    "sfgdnet_try_lambda_div": 1e-3,
+                    "SplineEqNet_lambda_l1": 0.0,
+                    "SplineEqNet_lambda_div": 1e-3,
                 },
             ),
         ]
@@ -302,13 +302,13 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 name="G2_top1_routing",
                 description="Hard top-k routing with k=1; each frequency goes to the most active expert.",
                 groups=("G", "routing"),
-                overrides={"sfgdnet_try_routing": "top1"},
+                overrides={"SplineEqNet_routing": "top1"},
             ),
             _make_scenario(
                 name="G3_hard_partition_routing",
                 description="Explicitly partitions the frequency axis into hard bands.",
                 groups=("G", "routing"),
-                overrides={"sfgdnet_try_routing": "hard_partition"},
+                overrides={"SplineEqNet_routing": "hard_partition"},
             ),
         ]
     )
@@ -323,7 +323,7 @@ def _build_sfgdnet_try_scenarios(default_dct_len: int, default_layers: int) -> L
                 overrides={
                     "simlpe_mix_spatial_temporal": True,
                     "simlpe_norm_axis": "spatial",
-                    "sfgdnet_try_num_layers": default_layers,
+                    "SplineEqNet_num_layers": default_layers,
                 },
             ),
         ]
@@ -368,8 +368,8 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=str,
-        default="sfgdnet_try",
-        help="Model key to pull from the best-model JSON (default: sfgdnet_try).",
+        default="SplineEqNet",
+        help="Model key to pull from the best-model JSON (default: SplineEqNet).",
     )
     parser.add_argument("--best-json", type=str, default=BEST_MODELS_PATH, help="JSON file with best-model configurations.")
     parser.add_argument("--data-dir", type=str, default="", help="Override dataset root directory.")
@@ -446,7 +446,7 @@ def main() -> None:
     else:
         baseline_dct_len = int(train_cfg_template.dct_keep_coeffs)
     candidate_layers = [
-        getattr(train_cfg_template, "sfgdnet_try_num_layers", None),
+        getattr(train_cfg_template, "SplineEqNet_num_layers", None),
         train_cfg_template.simlpe_fast_layers,
         train_cfg_template.simlpe_slow_layers,
     ]
@@ -461,7 +461,7 @@ def main() -> None:
     else:
         seed_values = [ds_cfg_template.seed]
 
-    scenarios: List[Dict[str, object]] = _build_sfgdnet_try_scenarios(baseline_dct_len, baseline_layers)
+    scenarios: List[Dict[str, object]] = _build_SplineEqNet_scenarios(baseline_dct_len, baseline_layers)
     scenario_filter = _parse_comma_list(args.scenarios)
     if scenario_filter is not None:
         scenario_filter_set = {name.lower() for name in scenario_filter}
@@ -469,14 +469,14 @@ def main() -> None:
         if not scenarios:
             raise SystemExit(f"No scenarios match the provided filter: {scenario_filter}.")
 
-    results_dir = os.path.join(args.results_root, dataset_name, "sfgdnet_try_architecture")
+    results_dir = os.path.join(args.results_root, dataset_name, "SplineEqNet_architecture")
     _ensure_dir(results_dir)
     results_csv = os.path.join(results_dir, args.results_name)
     results_csv = _append_window_horizon(results_csv, ds_cfg_template.input_n, ds_cfg_template.output_n)
     if action_filter:
         results_csv = results_csv.replace(".csv", f"_{action_filter}.csv")
 
-    save_root_base = os.path.join(args.save_root, dataset_name, "sfgdnet_try_architecture")
+    save_root_base = os.path.join(args.save_root, dataset_name, "SplineEqNet_architecture")
     _ensure_dir(save_root_base)
 
     fieldnames = list(BASE_FIELDNAMES)
@@ -570,18 +570,18 @@ def main() -> None:
                 row["simlpe_mid_gate_max"] = scenario_train_cfg.simlpe_mid_gate_max
             supplemental_keys = [
                 "dct_keep_coeffs",
-                "sfgdnet_try_skip_dct",
-                "sfgdnet_try_num_gates",
-                "sfgdnet_try_padding_mode",
-                "sfgdnet_try_force_mlp_padding",
-                "sfgdnet_try_padding_predictor",
-                "sfgdnet_try_padding_full_horizon",
-                "sfgdnet_try_gate_basis_degree",
-                "sfgdnet_try_gate_basis_size",
-                "sfgdnet_try_lambda_l1",
-                "sfgdnet_try_lambda_div",
-                "sfgdnet_try_routing",
-                "sfgdnet_try_num_layers",
+                "SplineEqNet_skip_dct",
+                "SplineEqNet_num_gates",
+                "SplineEqNet_padding_mode",
+                "SplineEqNet_force_mlp_padding",
+                "SplineEqNet_padding_predictor",
+                "SplineEqNet_padding_full_horizon",
+                "SplineEqNet_gate_basis_degree",
+                "SplineEqNet_gate_basis_size",
+                "SplineEqNet_lambda_l1",
+                "SplineEqNet_lambda_div",
+                "SplineEqNet_routing",
+                "SplineEqNet_num_layers",
                 "simlpe_mix_spatial_temporal",
                 "simlpe_norm_axis",
             ]

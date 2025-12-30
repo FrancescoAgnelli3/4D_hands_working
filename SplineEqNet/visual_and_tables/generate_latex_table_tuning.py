@@ -12,20 +12,20 @@ def build_grid(df, metric_col):
     Also returns lists of sorted layers and hidden_sizes.
     """
 
-    required = ["hidden_size", "sfgdnet_try_num_layers", "action", metric_col]
+    required = ["hidden_size", "SplineEqNet_num_layers", "action", metric_col]
     for r in required:
         if r not in df.columns:
             raise ValueError(f"Missing required column: {r}")
 
     df["hidden_size"] = pd.to_numeric(df["hidden_size"], errors="coerce")
-    df["sfgdnet_try_num_layers"] = pd.to_numeric(
-        df["sfgdnet_try_num_layers"], errors="coerce"
+    df["SplineEqNet_num_layers"] = pd.to_numeric(
+        df["SplineEqNet_num_layers"], errors="coerce"
     )
     df[metric_col] = pd.to_numeric(df[metric_col], errors="coerce")
-    df = df.dropna(subset=["hidden_size", "sfgdnet_try_num_layers", metric_col])
+    df = df.dropna(subset=["hidden_size", "SplineEqNet_num_layers", metric_col])
 
     actions = sorted(df["action"].astype(str).str.lower().unique())
-    layers = sorted(df["sfgdnet_try_num_layers"].unique())
+    layers = sorted(df["SplineEqNet_num_layers"].unique())
     hidden_sizes = sorted(df["hidden_size"].unique())
 
     store = {act: {} for act in actions}
@@ -35,7 +35,7 @@ def build_grid(df, metric_col):
         for hs in hidden_sizes:
             for nl in layers:
                 sub = df_a[(df_a["hidden_size"] == hs) &
-                           (df_a["sfgdnet_try_num_layers"] == nl)]
+                           (df_a["SplineEqNet_num_layers"] == nl)]
                 if sub.empty:
                     continue
                 store[act][(nl, hs)] = sub[metric_col].min()

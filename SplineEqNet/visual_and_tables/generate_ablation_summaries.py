@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 # Directory containing the CSVs to aggregate
-BASE_DIR = Path("/home/agnelli/projects/4D_hands_working/SFgDNet/out/ablation/assembly/sfgdnet_try_architecture")
+BASE_DIR = Path("/home/agnelli/projects/4D_hands_working/SplineEqNet/out/ablation/assembly/SplineEqNet_architecture")
 # Output CSV path
 OUTPUT_CSV = BASE_DIR / "aggregate_simlpe_architecture.csv"
 

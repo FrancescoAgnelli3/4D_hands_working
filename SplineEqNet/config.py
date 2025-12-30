@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 
-DEFAULT_MODELS = "last,hisrep,eqmotion,simlpe_dct,SFgDNet,sfgdnet_try,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer"
+DEFAULT_MODELS = "last,hisrep,eqmotion,simlpe_dct,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer"
 DATASET_CHOICES: Tuple[str, ...] = ("assembly", "h2o", "bighands", "fpha")
 
 MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
@@ -151,8 +151,8 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "epochs": 100,
         "num_layers": 32,
     },
-    "sfgdnet_try": {
-        "model": "sfgdnet_try",
+    "splineeqnet": {
+        "model": "SplineEqNet",
         "input_n": 70,
         "output_n": 30,
         "stride": 5,
@@ -171,8 +171,8 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "simlpe_mid_gate_max": 0.5,
         "epochs": 100,
         "num_layers": 4,
-        "sfgdnet_try_lambda_l1": 1e-2,
-        "sfgdnet_try_num_gates": 2,
+        "SplineEqNet_lambda_l1": 1e-2,
+        "SplineEqNet_num_gates": 2,
     },
     "trajdep": {
         "model": "trajdep",
@@ -281,29 +281,29 @@ class TrainCfg:
     SFgDNet_learn_centers: Optional[bool] = None
     SFgDNet_fixed_lambda: Optional[float] = None
     SFgDNet_fixed_centers: Optional[Tuple[float, float]] = None
-    save_sfgdnet_try_mask: bool = False
-    save_sfgdnet_try_gates: bool = False
-    sfgdnet_try_fixed_mask: Optional[float] = None
-    sfgdnet_try_freeze_gate: bool = False
-    sfgdnet_try_disable_slow_branch: bool = False
-    sfgdnet_try_disable_fast_branch: bool = False
-    sfgdnet_try_fixed_mid_gate: Optional[float] = None
-    sfgdnet_try_skip_dct: bool = False
-    sfgdnet_try_padding_mode: Optional[str] = None
-    sfgdnet_try_force_mlp_padding: Optional[bool] = None
-    sfgdnet_try_padding_predictor: Optional[str] = None
-    sfgdnet_try_padding_full_horizon: Optional[bool] = None
-    sfgdnet_try_learn_lambda: Optional[bool] = None
-    sfgdnet_try_learn_centers: Optional[bool] = None
-    sfgdnet_try_fixed_lambda: Optional[float] = None
-    sfgdnet_try_fixed_centers: Optional[Tuple[float, float]] = None
-    sfgdnet_try_num_gates: Optional[int] = 6
-    sfgdnet_try_gate_basis_degree: Optional[int] = None
-    sfgdnet_try_gate_basis_size: Optional[int] = None
-    sfgdnet_try_num_layers: Optional[int] = None
-    sfgdnet_try_lambda_l1: Optional[float] = None
-    sfgdnet_try_lambda_div: Optional[float] = 1e-2
-    sfgdnet_try_routing: Optional[str] = None
+    save_SplineEqNet_mask: bool = False
+    save_SplineEqNet_gates: bool = False
+    SplineEqNet_fixed_mask: Optional[float] = None
+    SplineEqNet_freeze_gate: bool = False
+    SplineEqNet_disable_slow_branch: bool = False
+    SplineEqNet_disable_fast_branch: bool = False
+    SplineEqNet_fixed_mid_gate: Optional[float] = None
+    SplineEqNet_skip_dct: bool = False
+    SplineEqNet_padding_mode: Optional[str] = None
+    SplineEqNet_force_mlp_padding: Optional[bool] = None
+    SplineEqNet_padding_predictor: Optional[str] = None
+    SplineEqNet_padding_full_horizon: Optional[bool] = None
+    SplineEqNet_learn_lambda: Optional[bool] = None
+    SplineEqNet_learn_centers: Optional[bool] = None
+    SplineEqNet_fixed_lambda: Optional[float] = None
+    SplineEqNet_fixed_centers: Optional[Tuple[float, float]] = None
+    SplineEqNet_num_gates: Optional[int] = 6
+    SplineEqNet_gate_basis_degree: Optional[int] = None
+    SplineEqNet_gate_basis_size: Optional[int] = None
+    SplineEqNet_num_layers: Optional[int] = None
+    SplineEqNet_lambda_l1: Optional[float] = None
+    SplineEqNet_lambda_div: Optional[float] = 1e-2
+    SplineEqNet_routing: Optional[str] = None
     simlpe_reg_freq_kl: Optional[float] = None
     simlpe_reg_tv: Optional[float] = None
     simlpe_reg_entropy: Optional[float] = None
@@ -350,10 +350,10 @@ def build_argument_parser(base_dir: str, default_data_dir: str) -> argparse.Argu
     ap.add_argument("--simlpe-fast-layers", type=str, default="4,6,8", help="Comma-separated fast-branch layer counts for siMLPe dual-path.")
     ap.add_argument("--simlpe-mid-gate-maxes", type=str, default="0.5", help="Comma-separated maximum gate values for the siMLPe dual MID branch.")
     ap.add_argument(
-        "--sfgdnet-try-num-layers",
+        "--SplineEqNet-num-layers",
         type=str,
         default="1, 2, 4, 6, 8",
-        help="Comma-separated expert depths for sfgdnet_try mixtures (num_layers override).",
+        help="Comma-separated expert depths for SplineEqNet mixtures (num_layers override).",
     )
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--seeds", type=str, default=None, help="Optional seed list to override --seed")

@@ -9,7 +9,7 @@ import pandas as pd
 MODEL_CANON = {
     "last": "Last",
     "sfgdnet": "SFgDNet",
-    "sfgdnet_try": "ourmodel",
+    "SplineEqNet": "ourmodel",
     "simlpe": "siMLPe",
     "simlpe_dct": "siMLPe",
     "hisrep": "HisRep",
@@ -261,7 +261,7 @@ def main():
     )
     parser.add_argument(
         "--csv",
-        default="/home/agnelli/projects/4D_hands_working/SFgDNet/out/best_runs/aggregate.csv",
+        default="/home/agnelli/projects/4D_hands_working/SplineEqNet/out/best_runs/aggregate.csv",
         help="Path to input CSV (single file with all results).",
     )
     parser.add_argument(

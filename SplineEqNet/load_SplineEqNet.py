@@ -14,12 +14,12 @@ from torch.utils.data import DataLoader
 
 from config import DatasetCfg, MODEL_DEFAULT_CONFIGS
 from data import collect_sequences_from_files_wrist_centered, get_dataset_metadata
-from models.sfgdnet_try import SFgDNetTryConfig, SFgDNetTryForecaster # <- MoE forecaster
+from models.SplineEqNet import SplineEqNetConfig, SplineEqNetForecaster # <- MoE forecaster
 
 
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "examples" / "models"
 MODEL_FILE_TEMPLATE = "{model}_{dataset}_{action}.pt"
-DEFAULT_MODEL_NAME = "sfgdnet_try"
+DEFAULT_MODEL_NAME = "SplineEqNet"
 
 
 @dataclass(frozen=True)
@@ -30,16 +30,16 @@ class ModelComponents:
 
 
 SUPPORTED_MODELS: dict[str, ModelComponents] = {
-    "sfgdnet_try": ModelComponents(
-        model_key="sfgdnet_try",
-        config_cls=SFgDNetTryConfig,
-        forecaster_cls=SFgDNetTryForecaster,
+    "SplineEqNet": ModelComponents(
+        model_key="SplineEqNet",
+        config_cls=SplineEqNetConfig,
+        forecaster_cls=SplineEqNetForecaster,
     ),
 }
 
 
 def _model_defaults(model_key: str) -> dict[str, object]:
-    defaults = MODEL_DEFAULT_CONFIGS.get(model_key)
+    defaults = MODEL_DEFAULT_CONFIGS.get(model_key.lower())
     if defaults is None:
         raise ValueError(
             f"No MODEL_DEFAULT_CONFIGS entry found for '{model_key}'. "
@@ -489,8 +489,8 @@ def inspect_checkpoint(
     parsed_tag = parse_tag(metadata.get("tag"))
     state_dict = checkpoint.get("best_model_state", checkpoint)
     # Optional wrapper handling
-    if isinstance(state_dict, dict) and "sfgdnet_try" in state_dict:
-        state_dict = state_dict["sfgdnet_try"]
+    if isinstance(state_dict, dict) and "SplineEqNet" in state_dict:
+        state_dict = state_dict["SplineEqNet"]
     cfg = build_config(dataset, parsed_tag, components)
     if isinstance(state_dict, Mapping):
         _align_config_with_checkpoint(cfg, state_dict)
@@ -598,7 +598,7 @@ def plot_gates(summaries: Sequence[ActionGateSummary], output: Path, mode: str) 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Inspect MoE sfgdnet checkpoints across actions.")
+    parser = argparse.ArgumentParser(description="Inspect MoE SplineEqNet checkpoints across actions.")
     parser.add_argument(
         "--dataset",
         "-d",
@@ -608,7 +608,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL_NAME,
-        help="Model prefix used when naming checkpoints (default: sfgdnet_try).",
+        help="Model prefix used when naming checkpoints (default: SplineEqNet).",
     )
     parser.add_argument(
         "--model-dir",

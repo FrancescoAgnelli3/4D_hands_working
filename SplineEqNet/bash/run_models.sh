@@ -24,8 +24,8 @@ HORIZONS=(49 40 30 20 10)
 # if 50-50 should run, allow horizon == window
 ALLOW_EQUAL_WINDOW_HORIZON=true
 
-# DEFAULT_MODEL_LIST="last,hisrep,simlpe_dct,SFgDNet,sfgdnet_try,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion"
-DEFAULT_MODEL_LIST="sfgdnet_try"
+# DEFAULT_MODEL_LIST="last,hisrep,simlpe_dct,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion"
+DEFAULT_MODEL_LIST="SplineEqNet"
 IFS=',' read -r -a MODELS <<< "${DEFAULT_MODEL_LIST}"
 
 for dataset in "${DATASETS[@]}"; do

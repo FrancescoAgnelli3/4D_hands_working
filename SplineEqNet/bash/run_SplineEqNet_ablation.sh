@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch the sfgdnet_try architecture ablations for all standard Assembly actions.
+# Launch the SplineEqNet architecture ablations for all standard Assembly actions.
 
 set -euo pipefail
 

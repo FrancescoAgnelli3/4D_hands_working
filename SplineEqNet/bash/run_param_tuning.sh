@@ -14,7 +14,7 @@ ALLOW_EQUAL_WINDOW_HORIZON=false
 
 ASSEMBLY_ACTION_FILTERS=("pick" "put" "remove" "unscrew" "rotate" "attempt")
 ABLATION_SCRIPT="${REPO_ROOT}/ablation_study.py"
-MODEL="sfgdnet_try"
+MODEL="SplineEqNet"
 
 for dataset in "${DATASETS[@]}"; do
   for split in "${TIME_SPLITS[@]}"; do

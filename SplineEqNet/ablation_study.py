@@ -41,7 +41,7 @@ CONFIG_SIGNATURE_FIELDS = [
     "simlpe_slow_layers",
     "simlpe_fast_layers",
     "simlpe_mid_gate_max",
-    "sfgdnet_try_num_layers",
+    "SplineEqNet_num_layers",
     "epochs",
 ]
 
@@ -83,7 +83,7 @@ def _config_signature(ds: DatasetCfg, cfg: TrainCfg, seed: int) -> Tuple[str, ..
         "simlpe_slow_layers": cfg.simlpe_slow_layers,
         "simlpe_fast_layers": cfg.simlpe_fast_layers,
         "simlpe_mid_gate_max": cfg.simlpe_mid_gate_max,
-        "sfgdnet_try_num_layers": cfg.sfgdnet_try_num_layers,
+        "SplineEqNet_num_layers": cfg.SplineEqNet_num_layers,
         "epochs": cfg.epochs,
     }
     return tuple(_normalize_config_value(values[field]) for field in CONFIG_SIGNATURE_FIELDS)
@@ -164,9 +164,9 @@ def main():
     bone_ws = parse_list(args.bone_loss_weights, float)
     t_layers_list = parse_list(args.t_layers, int)
     gnn_layers_list = parse_list(args.gnn_layers, int)
-    sfgdnet_try_num_layers = parse_list(args.sfgdnet_try_num_layers, int) if args.sfgdnet_try_num_layers else []
-    if not sfgdnet_try_num_layers:
-        sfgdnet_try_num_layers = [1, 2, 4, 8]
+    SplineEqNet_num_layers = parse_list(args.SplineEqNet_num_layers, int) if args.SplineEqNet_num_layers else []
+    if not SplineEqNet_num_layers:
+        SplineEqNet_num_layers = [1, 2, 4, 8]
     simlpe_norm_axes = parse_list(args.simlpe_norm_axes, str) if args.simlpe_norm_axes else ["all"]
     simlpe_use_norms = parse_list(args.simlpe_use_norms, int) if args.simlpe_use_norms else []
     if simlpe_use_norms:
@@ -202,7 +202,7 @@ def main():
     if not hisrep_dct_ns:
         hisrep_dct_ns = [10]
 
-    sfgdnet_try_num_grid = list(sfgdnet_try_num_layers)
+    SplineEqNet_num_grid = list(SplineEqNet_num_layers)
 
     if args.preset == "basic":
         models_grid = models
@@ -214,7 +214,7 @@ def main():
         tl_grid = [t_layers_list[0]] if t_layers_list else [2]
         gnn_grid = [gnn_layers_list[0]] if gnn_layers_list else [2]
         gc_grid = [grad_clips[0]] if grad_clips else [10.0]
-        sfgdnet_try_num_grid = sfgdnet_try_num_layers
+        SplineEqNet_num_grid = SplineEqNet_num_layers
     elif args.preset == "extended":
         models_grid = models
         hs_grid = hidden_sizes
@@ -405,7 +405,7 @@ def main():
                             )
                         ),
                     ))
-            elif model == "sfgdnet_try":
+            elif model == "SplineEqNet":
                 if args.preset == "basic":
                     norm_axis = simlpe_norm_axes[0] if simlpe_norm_axes else None
                     use_norm = simlpe_use_norms[0] if simlpe_use_norms else None
@@ -417,7 +417,7 @@ def main():
                     slow_lay = simlpe_slow_layers[0] if simlpe_slow_layers else None
                     fast_lay = simlpe_fast_layers[0] if simlpe_fast_layers else None
                     gate_max = simlpe_mid_gate_maxes[0] if simlpe_mid_gate_maxes else None
-                    for hs, lr, gc, moe_layers in itertools.product(hs_grid, lr_grid, gc_grid, sfgdnet_try_num_grid):
+                    for hs, lr, gc, moe_layers in itertools.product(hs_grid, lr_grid, gc_grid, SplineEqNet_num_grid):
                         exps.append((
                             seed,
                             _apply_save_flag(
@@ -437,7 +437,7 @@ def main():
                                     simlpe_slow_layers=slow_lay,
                                     simlpe_fast_layers=fast_lay,
                                     simlpe_mid_gate_max=gate_max,
-                                    sfgdnet_try_num_layers=moe_layers,
+                                    SplineEqNet_num_layers=moe_layers,
                                 )
                             ),
                         ))
@@ -456,7 +456,7 @@ def main():
                         simlpe_slow_layers,
                         simlpe_fast_layers,
                         simlpe_mid_gate_maxes,
-                        sfgdnet_try_num_grid,
+                        SplineEqNet_num_grid,
                     ):
                         exps.append((
                             seed,
@@ -477,7 +477,7 @@ def main():
                                     simlpe_slow_layers=slow_lay,
                                     simlpe_fast_layers=fast_lay,
                                     simlpe_mid_gate_max=gate_max,
-                                    sfgdnet_try_num_layers=moe_layers,
+                                    SplineEqNet_num_layers=moe_layers,
                                 )
                             ),
                         ))
@@ -605,7 +605,7 @@ def main():
         "simlpe_slow_layers",
         "simlpe_fast_layers",
         "simlpe_mid_gate_max",
-        "sfgdnet_try_num_layers",
+        "SplineEqNet_num_layers",
         "epochs",
         "params",
         "train_mpjpe_best",
@@ -707,7 +707,7 @@ def main():
                 "simlpe_slow_layers": tr.simlpe_slow_layers,
                 "simlpe_fast_layers": tr.simlpe_fast_layers,
                 "simlpe_mid_gate_max": tr.simlpe_mid_gate_max,
-                "sfgdnet_try_num_layers": tr.sfgdnet_try_num_layers,
+                "SplineEqNet_num_layers": tr.SplineEqNet_num_layers,
                 "epochs": tr.epochs,
                 "params": metrics.get("params", 0),
                 "train_mpjpe_best": train_best_mpjpe,
@@ -728,7 +728,7 @@ def main():
                 "simlpe_slow_layers",
                 "simlpe_fast_layers",
                 "simlpe_mid_gate_max",
-                "sfgdnet_try_num_layers",
+                "SplineEqNet_num_layers",
             ):
                 if row[key] is None:
                     row[key] = ""

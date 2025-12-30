@@ -161,7 +161,7 @@ def _build_train_cfg(best_cfg: Dict[str, object], *, model_name: Optional[str] =
     resolved_model = model_name if model_name is not None else best_cfg.get("model")
     if resolved_model is None:
         resolved_model = "mpt"
-    hidden_default = 128 if target_model == "sfgdnet_try" else 64
+    hidden_default = 128 if target_model == "splineeqnet" else 64
     cfg = TrainCfg(
         model=str(resolved_model),
         epochs=_coerce_required(best_cfg.get("epochs"), int, default=_default_epochs_for_model(model_name)),
@@ -187,14 +187,14 @@ def _build_train_cfg(best_cfg: Dict[str, object], *, model_name: Optional[str] =
     cfg.simlpe_slow_layers = _coerce_optional(best_cfg.get("simlpe_slow_layers"), int)
     cfg.simlpe_fast_layers = _coerce_optional(best_cfg.get("simlpe_fast_layers"), int)
     cfg.simlpe_mid_gate_max = _coerce_optional(best_cfg.get("simlpe_mid_gate_max"), float)
-    cfg.sfgdnet_try_num_layers = _coerce_optional(best_cfg.get("sfgdnet_try_num_layers"), int)
-    if target_model == "sfgdnet_try" and cfg.sfgdnet_try_num_layers is None:
-        cfg.sfgdnet_try_num_layers = 32
-    num_gates = _coerce_optional(best_cfg.get("sfgdnet_try_num_gates"), int)
+    cfg.SplineEqNet_num_layers = _coerce_optional(best_cfg.get("SplineEqNet_num_layers"), int)
+    if target_model == "splineeqnet" and cfg.SplineEqNet_num_layers is None:
+        cfg.SplineEqNet_num_layers = 32
+    num_gates = _coerce_optional(best_cfg.get("SplineEqNet_num_gates"), int)
     if num_gates is None:
         num_gates = _coerce_optional(best_cfg.get("num_gates"), int)
     if num_gates is not None:
-        cfg.sfgdnet_try_num_gates = num_gates
+        cfg.SplineEqNet_num_gates = num_gates
 
     return cfg
 
@@ -314,7 +314,7 @@ def main():
     ap.add_argument(
         "--model",
         nargs="+",
-        default="last,hisrep,simlpe_dct,SFgDNet,sfgdnet_try,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion",
+        default="last,hisrep,simlpe_dct,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion",
         help="One or more models (space- or comma-separated) whose best configuration should run.",
     )
     ap.add_argument("--dataset", default="assembly", choices=DATASET_CHOICES, help="Dataset to use for experiments.")
@@ -343,8 +343,8 @@ def main():
     ap.add_argument("--wandb-run-prefix", type=str, default=None, help="Run name prefix for W&B.")
     ap.add_argument("--save-SFgDNet-mask", action="store_true", help="Persist SFgDNet mask values per epoch.")
     ap.add_argument("--save-SFgDNet-gates", action="store_true", help="Save SFgDNet gate traces per epoch.")
-    ap.add_argument("--save-sfgdnet-try-mask", action="store_true", help="Persist sfgdnet_try mask values per epoch.")
-    ap.add_argument("--save-sfgdnet-try-gates", action="store_true", help="Save sfgdnet_try gate traces per epoch.")
+    ap.add_argument("--save-SplineEqNet-mask", action="store_true", help="Persist SplineEqNet mask values per epoch.")
+    ap.add_argument("--save-SplineEqNet-gates", action="store_true", help="Save SplineEqNet gate traces per epoch.")
     ap.add_argument("--save-eval-examples", action="store_true", help="Persist evaluation examples during validation/testing.")
     ap.add_argument("--window", type=int, default=None, help="Optional override for the input window length (input_n).")
     ap.add_argument("--horizon", type=int, default=None, help="Optional override for the prediction horizon length (output_n).")
@@ -508,8 +508,8 @@ def main():
                 train_cfg.model = model_name
                 train_cfg.save_SFgDNet_mask = bool(args.save_SFgDNet_mask)
                 train_cfg.save_SFgDNet_gates = bool(args.save_SFgDNet_gates)
-                train_cfg.save_sfgdnet_try_mask = bool(args.save_sfgdnet_try_mask)
-                train_cfg.save_sfgdnet_try_gates = bool(args.save_sfgdnet_try_gates)
+                train_cfg.save_SplineEqNet_mask = bool(args.save_SplineEqNet_mask)
+                train_cfg.save_SplineEqNet_gates = bool(args.save_SplineEqNet_gates)
                 train_cfg.save_eval_examples = bool(args.save_eval_examples)
 
                 metrics = run_experiment(

@@ -134,7 +134,7 @@ def main() -> None:
     parser.add_argument(
         "--best-runs-dir",
         type=Path,
-        default=Path("/home/agnelli/projects/4D_hands_working/SFgDNet/out/best_runs"),
+        default=Path("/home/agnelli/projects/4D_hands_working/SplineEqNet/out/best_runs"),
         help="Directory that contains dataset subfolders produced by best-run extraction.",
     )
     parser.add_argument(

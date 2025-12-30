@@ -42,7 +42,7 @@ def main() -> int:
         "target",
         nargs="?",
         default=BASE_OUT_DIR,
-        help="Path to out directory, a subdirectory, or a specific CSV file (default: SFgDNet/out)",
+        help="Path to out directory, a subdirectory, or a specific CSV file (default: SplineEqNet/out)",
     )
     args = parser.parse_args()
     model_name = args.model

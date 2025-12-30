@@ -27,8 +27,8 @@ from torch import nn
 from config import MODEL_DEFAULT_CONFIGS
 
 
-def _sfgdnet_try_default(key: str, fallback):
-    defaults = MODEL_DEFAULT_CONFIGS.get("sfgdnet_try") or {}
+def _SplineEqNet_default(key: str, fallback):
+    defaults = MODEL_DEFAULT_CONFIGS.get("splineeqnet") or {}
     return defaults.get(key, fallback)
 
 
@@ -278,15 +278,15 @@ class SiMLPeConfig:
 
 
 @dataclass
-class SFgDNetTryConfig(SiMLPeConfig):
+class SplineEqNetConfig(SiMLPeConfig):
     """siMLPe with learned soft band partition in the DCT domain."""
-    num_layers: Optional[int] = field(default=_sfgdnet_try_default("num_layers", None))
-    dct_components: Optional[int] = field(default=_sfgdnet_try_default("dct_keep_coeffs", None))
-    mask_temperature: float = field(default=_sfgdnet_try_default("simlpe_mask_temperature", 1.0))
-    slow_num_layers: Optional[int] = field(default=_sfgdnet_try_default("simlpe_slow_layers", None))
-    fast_num_layers: Optional[int] = field(default=_sfgdnet_try_default("simlpe_fast_layers", None))
+    num_layers: Optional[int] = field(default=_SplineEqNet_default("num_layers", None))
+    dct_components: Optional[int] = field(default=_SplineEqNet_default("dct_keep_coeffs", None))
+    mask_temperature: float = field(default=_SplineEqNet_default("simlpe_mask_temperature", 1.0))
+    slow_num_layers: Optional[int] = field(default=_SplineEqNet_default("simlpe_slow_layers", None))
+    fast_num_layers: Optional[int] = field(default=_SplineEqNet_default("simlpe_fast_layers", None))
     mid_gate_max: float = field(
-        default=_sfgdnet_try_default("simlpe_mid_gate_max", 1.0)
+        default=_SplineEqNet_default("simlpe_mid_gate_max", 1.0)
     )  # unused, kept for signature compatibility
     gate_basis_size: Optional[int] = None
     gate_basis_degree: int = 3
@@ -414,18 +414,18 @@ class SiMLPeBackbone(nn.Module):
 
 
 
-class SFgDNetTryForecaster(nn.Module):
+class SplineEqNetForecaster(nn.Module):
     """Multi-gate DCT MoE forecaster with spline-based frequency gates.
 
     History: (B, T_in, N, 3) -> future: (B, T_pred, N, 3).
 
-    Differences vs SFgDNetTryForecaster:
+    Differences vs SplineEqNetForecaster:
         - Uses G spline-parameterized frequency gates instead of two (slow/fast).
         - Uses G SiMLPe experts (ModuleList) on gated DCT coefficients.
         - Fuses experts with the same continuous gates (no top-k).
         - Provides a simple L1 regularizer on average gate usage per expert.
     """
-    def __init__(self, cfg: "SFgDNetTryConfig") -> None:
+    def __init__(self, cfg: "SplineEqNetConfig") -> None:
         super().__init__()
         self.cfg = cfg
         T = cfg.total_length
@@ -684,4 +684,4 @@ class SFgDNetTryForecaster(nn.Module):
         return future
 
 
-__all__ = ["SFgDNetTryConfig", "SFgDNetTryForecaster"]
+__all__ = ["SplineEqNetConfig", "SplineEqNetForecaster"]

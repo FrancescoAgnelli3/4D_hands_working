@@ -48,7 +48,7 @@ for dataset in "${DATASETS[@]}"; do
             --seed "${SEED}" \
             --window "${window}" \
             --horizon "${horizon}" \
-            --model "sfgdnet_try" \
+            --model "SplineEqNet" \
             "$@"; then
         echo "Run FAILED: dataset=${dataset} test=${withheld} window=${window} horizon=${horizon}" >&2
       fi

@@ -138,7 +138,7 @@ def _build_train_cfg(
     resolved_model = model_name if model_name is not None else best_cfg.get("model")
     if resolved_model is None:
         resolved_model = "mpt"
-    hidden_default = 128 if target_model == "sfgdnet_try" else 64
+    hidden_default = 128 if target_model == "splineeqnet" else 64
     epoch_defaults = {
         "last": 1,
         "estag": 10,
@@ -176,12 +176,12 @@ def _build_train_cfg(
     cfg.simlpe_slow_layers = _coerce_optional(best_cfg.get("simlpe_slow_layers"), int)
     cfg.simlpe_fast_layers = _coerce_optional(best_cfg.get("simlpe_fast_layers"), int)
     cfg.simlpe_mid_gate_max = _coerce_optional(best_cfg.get("simlpe_mid_gate_max"), float)
-    cfg.sfgdnet_try_num_layers = _coerce_optional(best_cfg.get("num_layers"), int)
-    num_gates = _coerce_optional(best_cfg.get("sfgdnet_try_num_gates"), int)
+    cfg.SplineEqNet_num_layers = _coerce_optional(best_cfg.get("num_layers"), int)
+    num_gates = _coerce_optional(best_cfg.get("SplineEqNet_num_gates"), int)
     if num_gates is None:
         num_gates = _coerce_optional(best_cfg.get("num_gates"), int)
     if num_gates is not None:
-        cfg.sfgdnet_try_num_gates = num_gates
+        cfg.SplineEqNet_num_gates = num_gates
 
     return cfg
 
@@ -254,7 +254,7 @@ def main():
     ap.add_argument(
         "--model",
         nargs="+",
-        default="last,hisrep,simlpe_dct,SFgDNet,sfgdnet_try,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion",
+        default="last,hisrep,simlpe_dct,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion",
         help="One or more model names (space- or comma-separated) whose best configuration should be trained.",
     )
     ap.add_argument("--dataset", default="assembly", choices=DATASET_CHOICES, help="Dataset to use for training the best model.")
@@ -271,8 +271,8 @@ def main():
     ap.add_argument("--wandb-run-prefix", type=str, default=None, help="Optional run name prefix for W&B.")
     ap.add_argument("--save-SFgDNet-mask", action="store_true", help="When set, persist the SFgDNet mask values (m) for every training epoch.")
     ap.add_argument("--save-SFgDNet-gates", action="store_true", help="When set, enable gate_logging_enabled so slow/fast gate traces are saved into the examples folder.")
-    ap.add_argument("--save-sfgdnet-try-mask", action="store_true", help="When set, persist the sfgdnet_try mask values (m) for every training epoch.")
-    ap.add_argument("--save-sfgdnet-try-gates", action="store_true", help="When set, enable gate logging for the sfgdnet_try variant.")
+    ap.add_argument("--save-SplineEqNet-mask", action="store_true", help="When set, persist the SplineEqNet mask values (m) for every training epoch.")
+    ap.add_argument("--save-SplineEqNet-gates", action="store_true", help="When set, enable gate logging for the SplineEqNet variant.")
     ap.add_argument("--save-eval-examples", action="store_true", help="When set, persist evaluation examples (merged_pred/merged_tgt tensors) during validation/testing.")
     ap.add_argument("--save-best-model", action="store_true", help="When set, persist the best model checkpoint into the examples directory.")
     ap.add_argument("--window", type=int,default=None, help="Optional override for the input window length (input_n).")
@@ -335,8 +335,8 @@ def main():
             train_cfg.model = model_name
             train_cfg.save_SFgDNet_mask = bool(args.save_SFgDNet_mask)
             train_cfg.save_SFgDNet_gates = bool(args.save_SFgDNet_gates)
-            train_cfg.save_sfgdnet_try_mask = bool(args.save_sfgdnet_try_mask)
-            train_cfg.save_sfgdnet_try_gates = bool(args.save_sfgdnet_try_gates)
+            train_cfg.save_SplineEqNet_mask = bool(args.save_SplineEqNet_mask)
+            train_cfg.save_SplineEqNet_gates = bool(args.save_SplineEqNet_gates)
             train_cfg.save_eval_examples = bool(args.save_eval_examples)
 
             train_dataset, val_dataset, test_dataset = build_datasets(ds_cfg)
