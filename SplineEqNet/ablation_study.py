@@ -367,6 +367,27 @@ def main():
                             )
                         ),
                     ))
+            elif model == "simlpe_wave":
+                for hs, gl, lr, gc in itertools.product(hs_grid, gl_grid, lr_grid, gc_grid):
+                    exps.append((
+                        seed,
+                        _apply_save_flag(
+                            TrainCfg(
+                                model=model,
+                                epochs=epochs_for_model,
+                                lr=lr,
+                                hidden_size=hs,
+                                gru_layers=gl,
+                                gradient_clip=gc,
+                                simlpe_wave_wavelet="db4",
+                                simlpe_wave_swt_level=5,
+                                simlpe_wave_include_approx=True,
+                                simlpe_wave_norm_axis="all",
+                                simlpe_wave_use_norm=True,
+                                simlpe_wave_add_last_offset=False,
+                            )
+                        ),
+                    ))
             elif model == "SFgDNet":
                 for hs, lr, gc, norm_axis, use_norm, spatial_fc, mix_flag, add_offset, dct_val, temp, slow_lay, fast_lay, gate_max in itertools.product(
                     hs_grid,
@@ -601,6 +622,12 @@ def main():
         "simlpe_use_spatial_fc_only",
         "simlpe_mix_spatial_temporal",
         "simlpe_add_last_offset",
+        "simlpe_wave_wavelet",
+        "simlpe_wave_swt_level",
+        "simlpe_wave_include_approx",
+        "simlpe_wave_norm_axis",
+        "simlpe_wave_use_norm",
+        "simlpe_wave_add_last_offset",
         "simlpe_mask_temperature",
         "simlpe_slow_layers",
         "simlpe_fast_layers",
@@ -703,6 +730,12 @@ def main():
                 "simlpe_use_spatial_fc_only": int(tr.simlpe_use_spatial_fc_only) if tr.simlpe_use_spatial_fc_only is not None else None,
                 "simlpe_mix_spatial_temporal": int(tr.simlpe_mix_spatial_temporal) if tr.simlpe_mix_spatial_temporal is not None else None,
                 "simlpe_add_last_offset": int(tr.simlpe_add_last_offset) if tr.simlpe_add_last_offset is not None else None,
+                "simlpe_wave_wavelet": tr.simlpe_wave_wavelet,
+                "simlpe_wave_swt_level": tr.simlpe_wave_swt_level,
+                "simlpe_wave_include_approx": int(tr.simlpe_wave_include_approx) if tr.simlpe_wave_include_approx is not None else None,
+                "simlpe_wave_norm_axis": tr.simlpe_wave_norm_axis,
+                "simlpe_wave_use_norm": int(tr.simlpe_wave_use_norm) if tr.simlpe_wave_use_norm is not None else None,
+                "simlpe_wave_add_last_offset": int(tr.simlpe_wave_add_last_offset) if tr.simlpe_wave_add_last_offset is not None else None,
                 "simlpe_mask_temperature": tr.simlpe_mask_temperature,
                 "simlpe_slow_layers": tr.simlpe_slow_layers,
                 "simlpe_fast_layers": tr.simlpe_fast_layers,
@@ -724,6 +757,12 @@ def main():
                 "simlpe_use_norm",
                 "simlpe_use_spatial_fc_only",
                 "simlpe_add_last_offset",
+                "simlpe_wave_wavelet",
+                "simlpe_wave_swt_level",
+                "simlpe_wave_include_approx",
+                "simlpe_wave_norm_axis",
+                "simlpe_wave_use_norm",
+                "simlpe_wave_add_last_offset",
                 "simlpe_mask_temperature",
                 "simlpe_slow_layers",
                 "simlpe_fast_layers",

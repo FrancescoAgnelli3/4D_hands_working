@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 
-DEFAULT_MODELS = "last,hisrep,eqmotion,simlpe_dct,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer"
+DEFAULT_MODELS = "last,hisrep,eqmotion,simlpe_dct,simlpe_wave,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer"
 DATASET_CHOICES: Tuple[str, ...] = ("assembly", "h2o", "bighands", "fpha")
 
 MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
@@ -128,6 +128,25 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "simlpe_add_last_offset": None,
         "epochs": 50,
     },
+    "simlpe_wave": {
+        "model": "simlpe_wave",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 128,
+        "gru_layers": 8,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "simlpe_wave_wavelet": "db4",
+        "simlpe_wave_swt_level": 5,
+        "simlpe_wave_include_approx": True,
+        "simlpe_wave_norm_axis": "all",
+        "simlpe_wave_use_norm": True,
+        "simlpe_wave_add_last_offset": False,
+        "epochs": 50,
+    },
     "sfgdnet": {
         "model": "SFgDNet",
         "input_n": 70,
@@ -172,6 +191,7 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "epochs": 100,
         "num_layers": 4,
         "SplineEqNet_lambda_l1": 1e-2,
+        "SplineEqNet_negpearson_weight": 0,
         "SplineEqNet_num_gates": 2,
     },
     "trajdep": {
@@ -261,6 +281,12 @@ class TrainCfg:
     simlpe_use_spatial_fc_only: Optional[bool] = None
     simlpe_mix_spatial_temporal: Optional[bool] = None
     simlpe_add_last_offset: Optional[bool] = None
+    simlpe_wave_wavelet: Optional[str] = None
+    simlpe_wave_swt_level: Optional[int] = None
+    simlpe_wave_include_approx: Optional[bool] = None
+    simlpe_wave_norm_axis: Optional[str] = None
+    simlpe_wave_use_norm: Optional[bool] = None
+    simlpe_wave_add_last_offset: Optional[bool] = None
     simlpe_mask_temperature: Optional[float] = None
     simlpe_slow_layers: Optional[int] = None
     simlpe_fast_layers: Optional[int] = None
@@ -303,6 +329,7 @@ class TrainCfg:
     SplineEqNet_num_layers: Optional[int] = None
     SplineEqNet_lambda_l1: Optional[float] = None
     SplineEqNet_lambda_div: Optional[float] = 1e-2
+    SplineEqNet_negpearson_weight: Optional[float] = 0.0
     SplineEqNet_routing: Optional[str] = None
     simlpe_reg_freq_kl: Optional[float] = None
     simlpe_reg_tv: Optional[float] = None

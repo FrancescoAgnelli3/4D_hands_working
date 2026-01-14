@@ -85,6 +85,18 @@ def run_experiment(
         tag += f"__simfast={int(train_cfg.simlpe_fast_layers)}"
     if train_cfg.simlpe_mid_gate_max is not None:
         tag += f"__simgate={float(train_cfg.simlpe_mid_gate_max):g}"
+    if train_cfg.simlpe_wave_wavelet is not None:
+        tag += f"__simwaveW={train_cfg.simlpe_wave_wavelet}"
+    if train_cfg.simlpe_wave_swt_level is not None:
+        tag += f"__simwaveL={int(train_cfg.simlpe_wave_swt_level)}"
+    if train_cfg.simlpe_wave_include_approx is not None:
+        tag += f"__simwaveA={int(train_cfg.simlpe_wave_include_approx)}"
+    if train_cfg.simlpe_wave_norm_axis is not None:
+        tag += f"__simwaveNorm={train_cfg.simlpe_wave_norm_axis}"
+    if train_cfg.simlpe_wave_use_norm is not None:
+        tag += f"__simwaveUseNorm={int(train_cfg.simlpe_wave_use_norm)}"
+    if train_cfg.simlpe_wave_add_last_offset is not None:
+        tag += f"__simwaveOffset={int(train_cfg.simlpe_wave_add_last_offset)}"
 
     mixer_tokens_dim = int(train_cfg.mixer_tokens_dim) if train_cfg.mixer_tokens_dim is not None else int(train_cfg.hidden_size)
     mixer_channels_dim = int(train_cfg.mixer_channels_dim) if train_cfg.mixer_channels_dim is not None else int(train_cfg.hidden_size)
@@ -170,6 +182,18 @@ def run_experiment(
         config["simlpe_fast_layers"] = int(train_cfg.simlpe_fast_layers)
     if train_cfg.simlpe_mid_gate_max is not None:
         config["simlpe_mid_gate_max"] = float(train_cfg.simlpe_mid_gate_max)
+    if train_cfg.simlpe_wave_wavelet is not None:
+        config["simlpe_wave_wavelet"] = str(train_cfg.simlpe_wave_wavelet)
+    if train_cfg.simlpe_wave_swt_level is not None:
+        config["simlpe_wave_swt_level"] = int(train_cfg.simlpe_wave_swt_level)
+    if train_cfg.simlpe_wave_include_approx is not None:
+        config["simlpe_wave_include_approx"] = bool(train_cfg.simlpe_wave_include_approx)
+    if train_cfg.simlpe_wave_norm_axis is not None:
+        config["simlpe_wave_norm_axis"] = str(train_cfg.simlpe_wave_norm_axis)
+    if train_cfg.simlpe_wave_use_norm is not None:
+        config["simlpe_wave_use_norm"] = bool(train_cfg.simlpe_wave_use_norm)
+    if train_cfg.simlpe_wave_add_last_offset is not None:
+        config["simlpe_wave_add_last_offset"] = bool(train_cfg.simlpe_wave_add_last_offset)
     if train_cfg.save_SFgDNet_mask:
         mask_dir = os.path.join(save_root, "SFgDNet_masks")
         os.makedirs(mask_dir, exist_ok=True)
@@ -258,6 +282,8 @@ def run_experiment(
         config["SplineEqNet_lambda_l1"] = float(train_cfg.SplineEqNet_lambda_l1)
     if train_cfg.SplineEqNet_lambda_div is not None:
         config["SplineEqNet_lambda_div"] = float(train_cfg.SplineEqNet_lambda_div)
+    if train_cfg.SplineEqNet_negpearson_weight is not None:
+        config["SplineEqNet_negpearson_weight"] = float(train_cfg.SplineEqNet_negpearson_weight)
     if train_cfg.SplineEqNet_routing is not None:
         config["SplineEqNet_routing"] = str(train_cfg.SplineEqNet_routing)
     wandb_run = None

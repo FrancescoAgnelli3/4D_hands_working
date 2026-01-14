@@ -172,10 +172,17 @@ def _build_train_cfg(
     cfg.simlpe_use_spatial_fc_only = _coerce_optional(best_cfg.get("simlpe_use_spatial_fc_only"), bool)
     cfg.simlpe_mix_spatial_temporal = _coerce_optional(best_cfg.get("simlpe_mix_spatial_temporal"), bool)
     cfg.simlpe_add_last_offset = _coerce_optional(best_cfg.get("simlpe_add_last_offset"), bool)
+    cfg.simlpe_wave_wavelet = _coerce_optional(best_cfg.get("simlpe_wave_wavelet"), str)
+    cfg.simlpe_wave_swt_level = _coerce_optional(best_cfg.get("simlpe_wave_swt_level"), int)
+    cfg.simlpe_wave_include_approx = _coerce_optional(best_cfg.get("simlpe_wave_include_approx"), bool)
+    cfg.simlpe_wave_norm_axis = _coerce_optional(best_cfg.get("simlpe_wave_norm_axis"), str)
+    cfg.simlpe_wave_use_norm = _coerce_optional(best_cfg.get("simlpe_wave_use_norm"), bool)
+    cfg.simlpe_wave_add_last_offset = _coerce_optional(best_cfg.get("simlpe_wave_add_last_offset"), bool)
     cfg.simlpe_mask_temperature = _coerce_optional(best_cfg.get("simlpe_mask_temperature"), float)
     cfg.simlpe_slow_layers = _coerce_optional(best_cfg.get("simlpe_slow_layers"), int)
     cfg.simlpe_fast_layers = _coerce_optional(best_cfg.get("simlpe_fast_layers"), int)
     cfg.simlpe_mid_gate_max = _coerce_optional(best_cfg.get("simlpe_mid_gate_max"), float)
+    cfg.SplineEqNet_negpearson_weight = _coerce_optional(best_cfg.get("SplineEqNet_negpearson_weight"), float)
     cfg.SplineEqNet_num_layers = _coerce_optional(best_cfg.get("num_layers"), int)
     num_gates = _coerce_optional(best_cfg.get("SplineEqNet_num_gates"), int)
     if num_gates is None:
@@ -254,7 +261,7 @@ def main():
     ap.add_argument(
         "--model",
         nargs="+",
-        default="last,hisrep,simlpe_dct,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion",
+        default="last,hisrep,simlpe_dct,simlpe_wave,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer,eqmotion",
         help="One or more model names (space- or comma-separated) whose best configuration should be trained.",
     )
     ap.add_argument("--dataset", default="assembly", choices=DATASET_CHOICES, help="Dataset to use for training the best model.")

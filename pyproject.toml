@@ -13,4 +13,5 @@ dependencies = [
     "torch-dct>=0.1.6",
     "torch-geometric>=2.6.1",
     "wandb>=0.22.2",
+    "PyWavelets>=1.9.0"
 ]

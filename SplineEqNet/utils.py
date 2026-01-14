@@ -45,6 +45,23 @@ def weighted_joint_loss(joint_weights: torch.Tensor, pred: torch.Tensor, target:
     return weighted_error
 
 
+def neg_pearson_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    if pred.shape != target.shape:
+        raise ValueError(f"pred and target must have the same shape, got {pred.shape} vs {target.shape}")
+    pred_flat = pred.reshape(pred.shape[0], -1)
+    target_flat = target.reshape(target.shape[0], -1)
+    pred_mean = pred_flat.mean(dim=1, keepdim=True)
+    target_mean = target_flat.mean(dim=1, keepdim=True)
+    pred_centered = pred_flat - pred_mean
+    target_centered = target_flat - target_mean
+    cov = (pred_centered * target_centered).mean(dim=1)
+    pred_var = pred_centered.pow(2).mean(dim=1)
+    target_var = target_centered.pow(2).mean(dim=1)
+    denom = torch.sqrt(pred_var * target_var + eps)
+    corr = cov / denom
+    return (1.0 - corr).mean()
+
+
 def compute_node_motion_weights(data_loader: DataLoader, device: torch.device, normalize: str = 'sum') -> torch.Tensor:
     total_motion = None
     total_count = 0

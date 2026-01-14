@@ -14,6 +14,7 @@ __all__ = ["train"]
 from models.mpt import model_4GRU
 from models.simlpe import SiMLPeConfig, SiMLPeForecaster
 from models.simlpe_dct import SiMLPeDCTConfig, SiMLPeDCTForecaster
+from models.simlpe_wave import SiMLPeWaveletConfig, SiMLPeWaveletForecaster
 from models.SFgDNet import SFgDNetConfig, SFgDNetForecaster
 from models.SplineEqNet import SplineEqNetConfig, SplineEqNetForecaster
 from models import hisrep as hisrep_module
@@ -159,6 +160,7 @@ def train(
     gate_epoch_history: List[torch.Tensor] = []
     gate_param_snapshot: Optional[Dict[str, torch.Tensor]] = None
     velocity_loss_weight = float(config.get("velocity_loss_weight", 0.0))
+    negpearson_weight = float(config.get("SplineEqNet_negpearson_weight", 0.0))
 
     adjacency_cfg = config.get("adjacency", ())
     adjacency_tensor = None
@@ -612,6 +614,24 @@ def train(
         params = list(simlpe_dct.parameters())
         optimizer = torch.optim.Adam(params, lr=learning_rate)
         params_count = _print_model_parameters(simlpe_dct, title="SiMLPeDCTForecaster")
+    elif model == "simlpe_wave":
+        sim_cfg = SiMLPeWaveletConfig(
+            input_length=input_n,
+            pred_length=output_n,
+            num_nodes=node_num,
+            hidden_dim=hidden_size,
+            num_layers=gru_layers,
+            use_norm=bool(config.get("simlpe_wave_use_norm", True)),
+            norm_axis=str(config.get("simlpe_wave_norm_axis", "all")),
+            add_last_offset_time_domain=bool(config.get("simlpe_wave_add_last_offset", False)),
+            wavelet=str(config.get("simlpe_wave_wavelet", "db4")),
+            swt_level=int(config.get("simlpe_wave_swt_level", 5)),
+            include_approx=bool(config.get("simlpe_wave_include_approx", True)),
+        )
+        simlpe_wave = SiMLPeWaveletForecaster(sim_cfg).to(device)
+        params = list(simlpe_wave.parameters())
+        optimizer = torch.optim.Adam(params, lr=learning_rate)
+        params_count = _print_model_parameters(simlpe_wave, title="SiMLPeWaveletForecaster")
     elif model == "SFgDNet":
         sfgdnet_model = _build_dual_branch_model(
             prefix="SFgDNet",
@@ -690,6 +710,8 @@ def train(
         model_modules = {"simlpe": simlpe}
     elif model == "simlpe_dct" and 'simlpe_dct' in locals():
         model_modules = {"simlpe_dct": simlpe_dct}
+    elif model == "simlpe_wave" and 'simlpe_wave' in locals():
+        model_modules = {"simlpe_wave": simlpe_wave}
     elif model == "SFgDNet" and sfgdnet_model is not None:
         model_modules = {"SFgDNet": sfgdnet_model}
     elif model == "SplineEqNet" and SplineEqNet_model is not None:
@@ -803,6 +825,8 @@ def train(
                         recons = simlpe(in_3d)
                     elif model == "simlpe_dct":
                         recons = simlpe_dct(in_3d)
+                    elif model == "simlpe_wave":
+                        recons = simlpe_wave(in_3d)
                     elif model in ("SFgDNet", "SplineEqNet"):
                         dual_model = _get_active_dual_model()
                         if dual_model is None:
@@ -1017,6 +1041,9 @@ def train(
             elif model == "simlpe_dct":
                 optimizer.zero_grad()
                 recons = simlpe_dct(in_3d)
+            elif model == "simlpe_wave":
+                optimizer.zero_grad()
+                recons = simlpe_wave(in_3d)
             elif model in ("SFgDNet", "SplineEqNet"):
                 optimizer.zero_grad()
                 dual_model = _get_active_dual_model()
@@ -1138,6 +1165,9 @@ def train(
                 reg_model = _get_active_dual_model()
                 lambda_l1 = config.get("SplineEqNet_lambda_l1")
                 lambda_div = config.get("SplineEqNet_lambda_div")
+                if negpearson_weight > 0:
+                    neg_pearson = U.neg_pearson_loss(recons, tgt_3d)
+                    loss = loss + negpearson_weight * neg_pearson
                 if reg_model is not None:
                     if lambda_l1 not in (None, 0, 0.0):
                         loss = loss + reg_model.gate_usage_l1(float(lambda_l1))
@@ -1161,7 +1191,7 @@ def train(
                     "test_weighted_mae": float('nan'),
                 }
 
-            if model in ("mpt", "estag", "simlpe", "simlpe_dct", "SFgDNet", "SplineEqNet", "trajdep", "hisrep", "hisrep_hand", "hisrep_rigidwrist", "eqmotion", "pgbig", "motionmixer", "mamba", "cde", "hstgcnn", "gwnet"):
+            if model in ("mpt", "estag", "simlpe", "simlpe_dct", "simlpe_wave", "SFgDNet", "SplineEqNet", "trajdep", "hisrep", "hisrep_hand", "hisrep_rigidwrist", "eqmotion", "pgbig", "motionmixer", "mamba", "cde", "hstgcnn", "gwnet"):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(params, max_norm=float(config.get("gradient_clip", 5.0)))
                 optimizer.step()
