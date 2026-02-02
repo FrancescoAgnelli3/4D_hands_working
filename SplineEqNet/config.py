@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 
-DEFAULT_MODELS = "last,hisrep,eqmotion,simlpe_dct,simlpe_wave,SFgDNet,SplineEqNet,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer"
+DEFAULT_MODELS = "last,hisrep,eqmotion,simlpe_dct,simlpe_wave,physmamba,SFgDNet,SplineEqNet,spectral,mpt,estag,hstgcnn,trajdep,pgbig,motionmixer"
 DATASET_CHOICES: Tuple[str, ...] = ("assembly", "h2o", "bighands", "fpha")
 
 MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
@@ -135,17 +135,61 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "stride": 5,
         "batch_size": 512,
         "lr": 1e-3,
+        "hidden_size": 64,
+        "gru_layers": 8,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "simlpe_wave_num_scales": 2,
+        "simlpe_wave_wavelet": "db2",
+        "simlpe_wave_wavelet_mode": "symmetric",
+        "simlpe_wave_padding_mode": "mlp",
+        "simlpe_wave_padding_predictor": "mlp",
+        "simlpe_wave_padding_full_horizon": False,
+        "simlpe_wave_norm_axis": "all",
+        "simlpe_wave_use_norm": True,
+        "simlpe_wave_add_last_offset": False,
+        "epochs": 100,
+    },
+    "twostage_dct_diffusion": {
+        "model": "twostage_dct_diffusion",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
         "hidden_size": 128,
         "gru_layers": 8,
         "gradient_clip": 10.0,
         "bone_loss_weight": 0.0,
-        "simlpe_wave_wavelet": "db4",
-        "simlpe_wave_swt_level": 5,
-        "simlpe_wave_include_approx": True,
-        "simlpe_wave_norm_axis": "all",
-        "simlpe_wave_use_norm": True,
-        "simlpe_wave_add_last_offset": False,
+        "twostage_k_low": 100,
+        "twostage_diffusion_epochs": 500,
+        "twostage_diffusion_steps": 100,
+        "twostage_ddim_steps": 50,
+        "twostage_denoiser_dim": 256,
+        "twostage_denoiser_depth": 6,
+        "twostage_denoiser_heads": 8,
+        "twostage_dropout": 0.0,
+        "twostage_freeze_coarse": True,
+        "twostage_mpjpe_weight": 0.0,
         "epochs": 50,
+    },
+    "physmamba": {
+        "model": "physmamba",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 256,
+        "t_layers": 6,
+        "physmamba_d_state": 16,
+        "physmamba_d_conv": 4,
+        "physmamba_expand": 2,
+        "physmamba_dropout": 0.1,
+        "physmamba_decoder_kernel": 5,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "epochs": 100,
     },
     "sfgdnet": {
         "model": "SFgDNet",
@@ -192,7 +236,7 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "num_layers": 4,
         "SplineEqNet_lambda_l1": 1e-2,
         "SplineEqNet_negpearson_weight": 0,
-        "SplineEqNet_num_gates": 2,
+        "SplineEqNet_num_gates": 6,
     },
     "trajdep": {
         "model": "trajdep",
@@ -209,6 +253,27 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "trajdep_dct": 35,
         "epochs": 100,
     },
+    "spectral": {
+        "model": "spectral",
+        "input_n": 70,
+        "output_n": 30,
+        "stride": 5,
+        "batch_size": 512,
+        "lr": 1e-3,
+        "hidden_size": 64,
+        "gradient_clip": 10.0,
+        "bone_loss_weight": 0.0,
+        "spectral_num_modes": 32,
+        "spectral_time_normalize": True,
+        "spectral_subtract_last": True,
+        "spectral_subtract_mean": False,
+        "spectral_use_coeff_mlp": True,
+        "spectral_coeff_mlp_hidden": 128,
+        "spectral_coeff_dropout": 0.0,
+        "spectral_coeff_residual": True,
+        "spectral_pinv_ridge": 0.0,
+        "epochs": 50,
+    },
 }
 
 
@@ -222,6 +287,7 @@ class DatasetCfg:
     time_interp: Optional[int] = None
     window_norm: Optional[int] = None
     batch_size: int = 128
+    eval_batch_mult: int = 1
     seed: int = 0
     wrist_indices: Tuple[int, ...] = ()
     dataset: str = "assembly"
@@ -273,6 +339,11 @@ class TrainCfg:
     augment_node_dropout: Optional[float] = None
     augment_channel_dropout: Optional[float] = None
     augment_time_dropout: Optional[float] = None
+    physmamba_d_state: Optional[int] = None
+    physmamba_d_conv: Optional[int] = None
+    physmamba_expand: Optional[int] = None
+    physmamba_dropout: Optional[float] = None
+    physmamba_decoder_kernel: Optional[int] = None
     dct_keep_coeffs: Optional[int] = 100
     hisrep_hand_dct_n: Optional[int] = None
     hisrep_dct_n: Optional[int] = None
@@ -281,12 +352,25 @@ class TrainCfg:
     simlpe_use_spatial_fc_only: Optional[bool] = None
     simlpe_mix_spatial_temporal: Optional[bool] = None
     simlpe_add_last_offset: Optional[bool] = None
+    simlpe_wave_num_scales: Optional[int] = None
     simlpe_wave_wavelet: Optional[str] = None
-    simlpe_wave_swt_level: Optional[int] = None
-    simlpe_wave_include_approx: Optional[bool] = None
+    simlpe_wave_wavelet_mode: Optional[str] = None
+    simlpe_wave_padding_mode: Optional[str] = None
+    simlpe_wave_padding_predictor: Optional[str] = None
+    simlpe_wave_padding_full_horizon: Optional[bool] = None
     simlpe_wave_norm_axis: Optional[str] = None
     simlpe_wave_use_norm: Optional[bool] = None
     simlpe_wave_add_last_offset: Optional[bool] = None
+    twostage_diffusion_epochs: Optional[int] = None
+    twostage_k_low: Optional[int] = None
+    twostage_diffusion_steps: Optional[int] = None
+    twostage_ddim_steps: Optional[int] = None
+    twostage_denoiser_dim: Optional[int] = None
+    twostage_denoiser_depth: Optional[int] = None
+    twostage_denoiser_heads: Optional[int] = None
+    twostage_dropout: Optional[float] = None
+    twostage_freeze_coarse: Optional[bool] = None
+    twostage_mpjpe_weight: Optional[float] = None
     simlpe_mask_temperature: Optional[float] = None
     simlpe_slow_layers: Optional[int] = None
     simlpe_fast_layers: Optional[int] = None
@@ -334,6 +418,15 @@ class TrainCfg:
     simlpe_reg_freq_kl: Optional[float] = None
     simlpe_reg_tv: Optional[float] = None
     simlpe_reg_entropy: Optional[float] = None
+    spectral_num_modes: Optional[int] = None
+    spectral_time_normalize: Optional[bool] = None
+    spectral_subtract_last: Optional[bool] = None
+    spectral_subtract_mean: Optional[bool] = None
+    spectral_use_coeff_mlp: Optional[bool] = None
+    spectral_coeff_mlp_hidden: Optional[int] = None
+    spectral_coeff_dropout: Optional[float] = None
+    spectral_coeff_residual: Optional[bool] = None
+    spectral_pinv_ridge: Optional[float] = None
 
 
 def parse_list(arg: str, cast):
@@ -351,6 +444,7 @@ def build_argument_parser(base_dir: str, default_data_dir: str) -> argparse.Argu
     ap.add_argument("--time-interp", type=int, default=None)
     ap.add_argument("--window-norm", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=512)
+    ap.add_argument("--eval-batch-mult", type=int, default=4, help="Multiplier for validation/test batch size.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--wrist-indices", type=str, default="", help="Comma-separated left and right wrist indices (zero-based). Uses dataset defaults when omitted.")
 

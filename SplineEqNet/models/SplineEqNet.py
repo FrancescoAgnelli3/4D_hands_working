@@ -662,9 +662,6 @@ class SplineEqNetForecaster(nn.Module):
         # # Fuse experts using the same continuous gates
         fused_coeffs = (preds * gates_exp).sum(dim=-1)  # (B, K, F)
 
-        # Fuse experts using normalized mask
-        # fused_coeffs = preds * 
-
         # iDCT with kept bands (if not skipping DCT)
         if not self._skip_dct:
             idct = self._idct_keep.unsqueeze(0).to(

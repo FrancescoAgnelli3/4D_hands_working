@@ -409,6 +409,7 @@ def make_loaders(
     test_dataset: Dataset,
     batch_size: int,
     seed: int,
+    eval_batch_mult: int = 1,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     train_generator = torch.Generator()
     train_generator.manual_seed(int(seed))
@@ -416,12 +417,21 @@ def make_loaders(
     val_generator.manual_seed(int(seed) + 1)
     test_generator = torch.Generator()
     test_generator.manual_seed(int(seed) + 2)
+    eval_mult = max(1, int(eval_batch_mult))
+    eval_batch_size = max(1, int(batch_size) * eval_mult)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, generator=train_generator)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False, generator=val_generator)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False, generator=test_generator)
+    val_loader = DataLoader(val_dataset, batch_size=eval_batch_size, shuffle=False, drop_last=False, generator=val_generator)
+    test_loader = DataLoader(test_dataset, batch_size=eval_batch_size, shuffle=False, drop_last=False, generator=test_generator)
     return train_loader, val_loader, test_loader
 
 
 def build_loaders(ds_cfg: DatasetCfg) -> Tuple[DataLoader, DataLoader, DataLoader]:
     train_dataset, val_dataset, test_dataset = build_datasets(ds_cfg)
-    return make_loaders(train_dataset, val_dataset, test_dataset, ds_cfg.batch_size, ds_cfg.seed)
+    return make_loaders(
+        train_dataset,
+        val_dataset,
+        test_dataset,
+        ds_cfg.batch_size,
+        ds_cfg.seed,
+        ds_cfg.eval_batch_mult,
+    )

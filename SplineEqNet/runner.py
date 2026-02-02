@@ -85,18 +85,62 @@ def run_experiment(
         tag += f"__simfast={int(train_cfg.simlpe_fast_layers)}"
     if train_cfg.simlpe_mid_gate_max is not None:
         tag += f"__simgate={float(train_cfg.simlpe_mid_gate_max):g}"
+    if train_cfg.simlpe_wave_num_scales is not None:
+        tag += f"__simwaveJ={int(train_cfg.simlpe_wave_num_scales)}"
     if train_cfg.simlpe_wave_wavelet is not None:
         tag += f"__simwaveW={train_cfg.simlpe_wave_wavelet}"
-    if train_cfg.simlpe_wave_swt_level is not None:
-        tag += f"__simwaveL={int(train_cfg.simlpe_wave_swt_level)}"
-    if train_cfg.simlpe_wave_include_approx is not None:
-        tag += f"__simwaveA={int(train_cfg.simlpe_wave_include_approx)}"
+    if train_cfg.simlpe_wave_wavelet_mode is not None:
+        tag += f"__simwaveMode={train_cfg.simlpe_wave_wavelet_mode}"
+    if train_cfg.simlpe_wave_padding_mode is not None:
+        tag += f"__simwavePad={train_cfg.simlpe_wave_padding_mode}"
+    if train_cfg.simlpe_wave_padding_predictor is not None:
+        tag += f"__simwavePred={train_cfg.simlpe_wave_padding_predictor}"
+    if train_cfg.simlpe_wave_padding_full_horizon is not None:
+        tag += f"__simwaveFull={int(train_cfg.simlpe_wave_padding_full_horizon)}"
     if train_cfg.simlpe_wave_norm_axis is not None:
         tag += f"__simwaveNorm={train_cfg.simlpe_wave_norm_axis}"
     if train_cfg.simlpe_wave_use_norm is not None:
         tag += f"__simwaveUseNorm={int(train_cfg.simlpe_wave_use_norm)}"
     if train_cfg.simlpe_wave_add_last_offset is not None:
         tag += f"__simwaveOffset={int(train_cfg.simlpe_wave_add_last_offset)}"
+    if train_cfg.twostage_diffusion_epochs is not None:
+        tag += f"__twepochs={int(train_cfg.twostage_diffusion_epochs)}"
+    if train_cfg.twostage_k_low is not None:
+        tag += f"__twk={int(train_cfg.twostage_k_low)}"
+    if train_cfg.twostage_diffusion_steps is not None:
+        tag += f"__twsteps={int(train_cfg.twostage_diffusion_steps)}"
+    if train_cfg.twostage_ddim_steps is not None:
+        tag += f"__twddim={int(train_cfg.twostage_ddim_steps)}"
+    if train_cfg.twostage_denoiser_dim is not None:
+        tag += f"__twdim={int(train_cfg.twostage_denoiser_dim)}"
+    if train_cfg.twostage_denoiser_depth is not None:
+        tag += f"__twdepth={int(train_cfg.twostage_denoiser_depth)}"
+    if train_cfg.twostage_denoiser_heads is not None:
+        tag += f"__twheads={int(train_cfg.twostage_denoiser_heads)}"
+    if train_cfg.twostage_dropout is not None:
+        tag += f"__twdrop={float(train_cfg.twostage_dropout):g}"
+    if train_cfg.twostage_freeze_coarse is not None:
+        tag += f"__twfreeze={int(train_cfg.twostage_freeze_coarse)}"
+    if train_cfg.twostage_mpjpe_weight is not None:
+        tag += f"__twmpjpe={float(train_cfg.twostage_mpjpe_weight):g}"
+    if train_cfg.spectral_num_modes is not None:
+        tag += f"__specK={int(train_cfg.spectral_num_modes)}"
+    if train_cfg.spectral_time_normalize is not None:
+        tag += f"__specTNorm={int(train_cfg.spectral_time_normalize)}"
+    if train_cfg.spectral_subtract_last is not None:
+        tag += f"__specSubLast={int(train_cfg.spectral_subtract_last)}"
+    if train_cfg.spectral_subtract_mean is not None:
+        tag += f"__specSubMean={int(train_cfg.spectral_subtract_mean)}"
+    if train_cfg.spectral_use_coeff_mlp is not None:
+        tag += f"__specMLP={int(train_cfg.spectral_use_coeff_mlp)}"
+    if train_cfg.spectral_coeff_mlp_hidden is not None:
+        tag += f"__specMLPH={int(train_cfg.spectral_coeff_mlp_hidden)}"
+    if train_cfg.spectral_coeff_dropout is not None:
+        tag += f"__specMLPDrop={float(train_cfg.spectral_coeff_dropout):g}"
+    if train_cfg.spectral_coeff_residual is not None:
+        tag += f"__specMLPRes={int(train_cfg.spectral_coeff_residual)}"
+    if train_cfg.spectral_pinv_ridge is not None:
+        tag += f"__specRidge={float(train_cfg.spectral_pinv_ridge):g}"
 
     mixer_tokens_dim = int(train_cfg.mixer_tokens_dim) if train_cfg.mixer_tokens_dim is not None else int(train_cfg.hidden_size)
     mixer_channels_dim = int(train_cfg.mixer_channels_dim) if train_cfg.mixer_channels_dim is not None else int(train_cfg.hidden_size)
@@ -182,18 +226,72 @@ def run_experiment(
         config["simlpe_fast_layers"] = int(train_cfg.simlpe_fast_layers)
     if train_cfg.simlpe_mid_gate_max is not None:
         config["simlpe_mid_gate_max"] = float(train_cfg.simlpe_mid_gate_max)
+    if train_cfg.simlpe_wave_num_scales is not None:
+        config["simlpe_wave_num_scales"] = int(train_cfg.simlpe_wave_num_scales)
     if train_cfg.simlpe_wave_wavelet is not None:
         config["simlpe_wave_wavelet"] = str(train_cfg.simlpe_wave_wavelet)
-    if train_cfg.simlpe_wave_swt_level is not None:
-        config["simlpe_wave_swt_level"] = int(train_cfg.simlpe_wave_swt_level)
-    if train_cfg.simlpe_wave_include_approx is not None:
-        config["simlpe_wave_include_approx"] = bool(train_cfg.simlpe_wave_include_approx)
+    if train_cfg.simlpe_wave_wavelet_mode is not None:
+        config["simlpe_wave_wavelet_mode"] = str(train_cfg.simlpe_wave_wavelet_mode)
+    if train_cfg.simlpe_wave_padding_mode is not None:
+        config["simlpe_wave_padding_mode"] = str(train_cfg.simlpe_wave_padding_mode)
+    if train_cfg.simlpe_wave_padding_predictor is not None:
+        config["simlpe_wave_padding_predictor"] = str(train_cfg.simlpe_wave_padding_predictor)
+    if train_cfg.simlpe_wave_padding_full_horizon is not None:
+        config["simlpe_wave_padding_full_horizon"] = bool(train_cfg.simlpe_wave_padding_full_horizon)
     if train_cfg.simlpe_wave_norm_axis is not None:
         config["simlpe_wave_norm_axis"] = str(train_cfg.simlpe_wave_norm_axis)
     if train_cfg.simlpe_wave_use_norm is not None:
         config["simlpe_wave_use_norm"] = bool(train_cfg.simlpe_wave_use_norm)
     if train_cfg.simlpe_wave_add_last_offset is not None:
         config["simlpe_wave_add_last_offset"] = bool(train_cfg.simlpe_wave_add_last_offset)
+    if train_cfg.twostage_diffusion_epochs is not None:
+        config["twostage_diffusion_epochs"] = int(train_cfg.twostage_diffusion_epochs)
+    if train_cfg.twostage_k_low is not None:
+        config["twostage_k_low"] = int(train_cfg.twostage_k_low)
+    if train_cfg.twostage_diffusion_steps is not None:
+        config["twostage_diffusion_steps"] = int(train_cfg.twostage_diffusion_steps)
+    if train_cfg.twostage_ddim_steps is not None:
+        config["twostage_ddim_steps"] = int(train_cfg.twostage_ddim_steps)
+    if train_cfg.twostage_denoiser_dim is not None:
+        config["twostage_denoiser_dim"] = int(train_cfg.twostage_denoiser_dim)
+    if train_cfg.twostage_denoiser_depth is not None:
+        config["twostage_denoiser_depth"] = int(train_cfg.twostage_denoiser_depth)
+    if train_cfg.twostage_denoiser_heads is not None:
+        config["twostage_denoiser_heads"] = int(train_cfg.twostage_denoiser_heads)
+    if train_cfg.twostage_dropout is not None:
+        config["twostage_dropout"] = float(train_cfg.twostage_dropout)
+    if train_cfg.twostage_freeze_coarse is not None:
+        config["twostage_freeze_coarse"] = bool(train_cfg.twostage_freeze_coarse)
+    if train_cfg.twostage_mpjpe_weight is not None:
+        config["twostage_mpjpe_weight"] = float(train_cfg.twostage_mpjpe_weight)
+    if train_cfg.spectral_num_modes is not None:
+        config["spectral_num_modes"] = int(train_cfg.spectral_num_modes)
+    if train_cfg.spectral_time_normalize is not None:
+        config["spectral_time_normalize"] = bool(train_cfg.spectral_time_normalize)
+    if train_cfg.spectral_subtract_last is not None:
+        config["spectral_subtract_last"] = bool(train_cfg.spectral_subtract_last)
+    if train_cfg.spectral_subtract_mean is not None:
+        config["spectral_subtract_mean"] = bool(train_cfg.spectral_subtract_mean)
+    if train_cfg.spectral_use_coeff_mlp is not None:
+        config["spectral_use_coeff_mlp"] = bool(train_cfg.spectral_use_coeff_mlp)
+    if train_cfg.spectral_coeff_mlp_hidden is not None:
+        config["spectral_coeff_mlp_hidden"] = int(train_cfg.spectral_coeff_mlp_hidden)
+    if train_cfg.spectral_coeff_dropout is not None:
+        config["spectral_coeff_dropout"] = float(train_cfg.spectral_coeff_dropout)
+    if train_cfg.spectral_coeff_residual is not None:
+        config["spectral_coeff_residual"] = bool(train_cfg.spectral_coeff_residual)
+    if train_cfg.spectral_pinv_ridge is not None:
+        config["spectral_pinv_ridge"] = float(train_cfg.spectral_pinv_ridge)
+    if train_cfg.physmamba_dropout is not None:
+        config["physmamba_dropout"] = float(train_cfg.physmamba_dropout)
+    if train_cfg.physmamba_d_state is not None:
+        config["physmamba_d_state"] = int(train_cfg.physmamba_d_state)
+    if train_cfg.physmamba_d_conv is not None:
+        config["physmamba_d_conv"] = int(train_cfg.physmamba_d_conv)
+    if train_cfg.physmamba_expand is not None:
+        config["physmamba_expand"] = int(train_cfg.physmamba_expand)
+    if train_cfg.physmamba_decoder_kernel is not None:
+        config["physmamba_decoder_kernel"] = int(train_cfg.physmamba_decoder_kernel)
     if train_cfg.save_SFgDNet_mask:
         mask_dir = os.path.join(save_root, "SFgDNet_masks")
         os.makedirs(mask_dir, exist_ok=True)

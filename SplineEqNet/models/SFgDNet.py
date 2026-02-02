@@ -29,6 +29,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from .CliffPhys import CliffMLP
+
 
 # ----------------------------- Norms & FCs -----------------------------------
 
@@ -299,14 +301,9 @@ class SiMLPeBackbone(nn.Module):
         num_layers = default_layers if num_layers_override is None else int(num_layers_override)
 
         self.fc_in = nn.Linear(cfg.feature_dim, cfg.hidden_dim)
-        self.mlp = _TransMLP(
-            cfg.hidden_dim,
-            seq_len,
-            use_norm=cfg.use_norm,
-            use_spatial_fc=cfg.use_spatial_fc_only,
+        self.mlp = CliffMLP(
+            algebra=[1, 1, 1],
             num_layers=num_layers,
-            norm_axis=cfg.norm_axis,
-            mix_spatial_temporal=bool(getattr(cfg, "mix_spatial_temporal", False)),
         )
         self.fc_out = nn.Linear(cfg.hidden_dim, cfg.feature_dim)
 
@@ -314,11 +311,11 @@ class SiMLPeBackbone(nn.Module):
         nn.init.constant_(self.fc_out.bias, 0.0)
 
     def forward(self, seq: torch.Tensor) -> torch.Tensor:
-        x = self.fc_in(seq)
-        x = x.transpose(1, 2).contiguous()
-        x = self.mlp(x)
-        x = x.transpose(1, 2).contiguous()
-        return self.fc_out(x)
+        # x = self.fc_in(seq)
+        # x = x.transpose(1, 2).contiguous()
+        x = self.mlp(seq)
+        # x = x.transpose(1, 2).contiguous()
+        return x
 
 
 # ------------------------------ Forecaster -----------------------------------
@@ -590,6 +587,8 @@ class SFgDNetForecaster(nn.Module):
         # Split coefficients
         coeffs_slow = delta_f * coeffs
         coeffs_fast = delta_c * coeffs
+
+        # import code; code.interact(local=dict(globals(), **locals()))
 
         # Per-branch processing
         if self._use_slow_branch:

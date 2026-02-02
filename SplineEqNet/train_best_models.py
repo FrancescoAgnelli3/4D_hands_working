@@ -102,6 +102,7 @@ def _build_dataset_cfg(
     window_override: Optional[int] = None,
     horizon_override: Optional[int] = None,
     seed_override: Optional[int] = None,
+    eval_batch_mult: Optional[int] = None,
 ) -> DatasetCfg:
     batch_size = _coerce_required(best_cfg.get("batch_size"), int, default=128)
     input_n = window_override if window_override is not None else _coerce_required(best_cfg.get("input_n"), int, default=90)
@@ -110,6 +111,7 @@ def _build_dataset_cfg(
     )
     stride = _coerce_required(best_cfg.get("stride"), int, default=5)
     seed = seed_override if seed_override is not None else _coerce_required(best_cfg.get("seed"), int, default=0)
+    eval_mult = eval_batch_mult if eval_batch_mult is not None else 1
     return DatasetCfg(
         data_dir=data_dir,
         action_filter=action_filter,
@@ -119,6 +121,7 @@ def _build_dataset_cfg(
         time_interp=None,
         window_norm=None,
         batch_size=batch_size,
+        eval_batch_mult=eval_mult,
         seed=seed,
         wrist_indices=wrist_indices,
         dataset=dataset_name,
@@ -172,18 +175,73 @@ def _build_train_cfg(
     cfg.simlpe_use_spatial_fc_only = _coerce_optional(best_cfg.get("simlpe_use_spatial_fc_only"), bool)
     cfg.simlpe_mix_spatial_temporal = _coerce_optional(best_cfg.get("simlpe_mix_spatial_temporal"), bool)
     cfg.simlpe_add_last_offset = _coerce_optional(best_cfg.get("simlpe_add_last_offset"), bool)
+    cfg.simlpe_wave_num_scales = _coerce_optional(best_cfg.get("simlpe_wave_num_scales"), int)
     cfg.simlpe_wave_wavelet = _coerce_optional(best_cfg.get("simlpe_wave_wavelet"), str)
-    cfg.simlpe_wave_swt_level = _coerce_optional(best_cfg.get("simlpe_wave_swt_level"), int)
-    cfg.simlpe_wave_include_approx = _coerce_optional(best_cfg.get("simlpe_wave_include_approx"), bool)
+    cfg.simlpe_wave_wavelet_mode = _coerce_optional(best_cfg.get("simlpe_wave_wavelet_mode"), str)
+    cfg.simlpe_wave_padding_mode = _coerce_optional(best_cfg.get("simlpe_wave_padding_mode"), str)
+    cfg.simlpe_wave_padding_predictor = _coerce_optional(best_cfg.get("simlpe_wave_padding_predictor"), str)
+    cfg.simlpe_wave_padding_full_horizon = _coerce_optional(best_cfg.get("simlpe_wave_padding_full_horizon"), bool)
     cfg.simlpe_wave_norm_axis = _coerce_optional(best_cfg.get("simlpe_wave_norm_axis"), str)
     cfg.simlpe_wave_use_norm = _coerce_optional(best_cfg.get("simlpe_wave_use_norm"), bool)
     cfg.simlpe_wave_add_last_offset = _coerce_optional(best_cfg.get("simlpe_wave_add_last_offset"), bool)
+    cfg.twostage_diffusion_epochs = _coerce_optional(best_cfg.get("twostage_diffusion_epochs"), int)
+    cfg.twostage_k_low = _coerce_optional(best_cfg.get("twostage_k_low"), int)
+    cfg.twostage_diffusion_steps = _coerce_optional(best_cfg.get("twostage_diffusion_steps"), int)
+    cfg.twostage_ddim_steps = _coerce_optional(best_cfg.get("twostage_ddim_steps"), int)
+    cfg.twostage_denoiser_dim = _coerce_optional(best_cfg.get("twostage_denoiser_dim"), int)
+    cfg.twostage_denoiser_depth = _coerce_optional(best_cfg.get("twostage_denoiser_depth"), int)
+    cfg.twostage_denoiser_heads = _coerce_optional(best_cfg.get("twostage_denoiser_heads"), int)
+    cfg.twostage_dropout = _coerce_optional(best_cfg.get("twostage_dropout"), float)
+    cfg.twostage_freeze_coarse = _coerce_optional(best_cfg.get("twostage_freeze_coarse"), bool)
+    cfg.twostage_mpjpe_weight = _coerce_optional(best_cfg.get("twostage_mpjpe_weight"), float)
+    cfg.physmamba_dropout = _coerce_optional(best_cfg.get("physmamba_dropout"), float)
+    cfg.physmamba_d_state = _coerce_optional(best_cfg.get("physmamba_d_state"), int)
+    cfg.physmamba_d_conv = _coerce_optional(best_cfg.get("physmamba_d_conv"), int)
+    cfg.physmamba_expand = _coerce_optional(best_cfg.get("physmamba_expand"), int)
+    cfg.physmamba_decoder_kernel = _coerce_optional(best_cfg.get("physmamba_decoder_kernel"), int)
     cfg.simlpe_mask_temperature = _coerce_optional(best_cfg.get("simlpe_mask_temperature"), float)
     cfg.simlpe_slow_layers = _coerce_optional(best_cfg.get("simlpe_slow_layers"), int)
     cfg.simlpe_fast_layers = _coerce_optional(best_cfg.get("simlpe_fast_layers"), int)
     cfg.simlpe_mid_gate_max = _coerce_optional(best_cfg.get("simlpe_mid_gate_max"), float)
+    if target_model in {"sfgdnet", "splineeqnet"}:
+        prefix = "SFgDNet" if target_model == "sfgdnet" else "SplineEqNet"
+        padding_mode = _coerce_optional(
+            best_cfg.get(f"{prefix}_padding_mode", best_cfg.get("padding_mode")),
+            str,
+        )
+        padding_predictor = _coerce_optional(
+            best_cfg.get(f"{prefix}_padding_predictor", best_cfg.get("padding_predictor")),
+            str,
+        )
+        padding_full_horizon = _coerce_optional(
+            best_cfg.get(f"{prefix}_padding_full_horizon", best_cfg.get("padding_full_horizon")),
+            bool,
+        )
+        force_mlp_padding = _coerce_optional(
+            best_cfg.get(f"{prefix}_force_mlp_padding", best_cfg.get("force_mlp_padding")),
+            bool,
+        )
+        if target_model == "sfgdnet":
+            cfg.SFgDNet_padding_mode = padding_mode
+            cfg.SFgDNet_padding_predictor = padding_predictor
+            cfg.SFgDNet_padding_full_horizon = padding_full_horizon
+            cfg.SFgDNet_force_mlp_padding = force_mlp_padding
+        else:
+            cfg.SplineEqNet_padding_mode = padding_mode
+            cfg.SplineEqNet_padding_predictor = padding_predictor
+            cfg.SplineEqNet_padding_full_horizon = padding_full_horizon
+            cfg.SplineEqNet_force_mlp_padding = force_mlp_padding
     cfg.SplineEqNet_negpearson_weight = _coerce_optional(best_cfg.get("SplineEqNet_negpearson_weight"), float)
     cfg.SplineEqNet_num_layers = _coerce_optional(best_cfg.get("num_layers"), int)
+    cfg.spectral_num_modes = _coerce_optional(best_cfg.get("spectral_num_modes"), int)
+    cfg.spectral_time_normalize = _coerce_optional(best_cfg.get("spectral_time_normalize"), bool)
+    cfg.spectral_subtract_last = _coerce_optional(best_cfg.get("spectral_subtract_last"), bool)
+    cfg.spectral_subtract_mean = _coerce_optional(best_cfg.get("spectral_subtract_mean"), bool)
+    cfg.spectral_use_coeff_mlp = _coerce_optional(best_cfg.get("spectral_use_coeff_mlp"), bool)
+    cfg.spectral_coeff_mlp_hidden = _coerce_optional(best_cfg.get("spectral_coeff_mlp_hidden"), int)
+    cfg.spectral_coeff_dropout = _coerce_optional(best_cfg.get("spectral_coeff_dropout"), float)
+    cfg.spectral_coeff_residual = _coerce_optional(best_cfg.get("spectral_coeff_residual"), bool)
+    cfg.spectral_pinv_ridge = _coerce_optional(best_cfg.get("spectral_pinv_ridge"), float)
     num_gates = _coerce_optional(best_cfg.get("SplineEqNet_num_gates"), int)
     if num_gates is None:
         num_gates = _coerce_optional(best_cfg.get("num_gates"), int)
@@ -271,7 +329,8 @@ def main():
     ap.add_argument("--action-filter", default="", help="Action substring filter for dataset files.")
     ap.add_argument("--save-root", default=DEFAULT_SAVE_ROOT, help="Directory to store model artifacts.")
     ap.add_argument("--seed", type=int, default=None, help="Override random seed for dataset/build pipeline.")
-    ap.add_argument("--epochs", type=int, default=100, help="Override the number of training epochs from the best config.")
+    ap.add_argument("--eval-batch-mult", type=int, default=1, help="Multiplier for validation/test batch size.")
+    ap.add_argument("--epochs", type=int, default=70, help="Override the number of training epochs from the best config.")
     ap.add_argument("--log-wandb", action="store_true", help="Enable logging to Weights & Biases.")
     ap.add_argument("--wandb-project", type=str, default=None, help="W&B project name.")
     ap.add_argument("--wandb-entity", type=str, default=None, help="W&B entity/team.")
@@ -335,6 +394,7 @@ def main():
                 window_override=args.window,
                 horizon_override=args.horizon,
                 seed_override=args.seed,
+                eval_batch_mult=args.eval_batch_mult,
             )
 
             train_cfg = _build_train_cfg(best_cfg, epochs_override=args.epochs, model_name=model_name)
@@ -348,7 +408,7 @@ def main():
 
             train_dataset, val_dataset, test_dataset = build_datasets(ds_cfg)
             train_loader, val_loader, test_loader = make_loaders(
-                train_dataset, val_dataset, test_dataset, ds_cfg.batch_size, ds_cfg.seed
+                train_dataset, val_dataset, test_dataset, ds_cfg.batch_size, ds_cfg.seed, ds_cfg.eval_batch_mult
             )
 
             if results_csv_path is None:

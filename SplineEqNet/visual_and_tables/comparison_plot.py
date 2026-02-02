@@ -11,12 +11,12 @@ from pathlib import Path
 # ---------------- CONFIG ----------------
 # ---------------- CONFIG ----------------
 current_dir = Path(__file__).resolve().parent.parent
-BASE_DIR = os.path.join(current_dir,"/examples")
-OUT_DIR  = os.path.join(current_dir,"visual_and_tables")
+BASE_DIR = os.path.join(current_dir, "examples")
+OUT_DIR = os.path.join(current_dir, "visual_and_tables")
 
 MODELS = [
-    "last","hisrep","simlpe_dct","mpt",
-    "estag","hstgcnn","trajdep","pgbig","motionmixer","eqmotion","SFgDNet","SplineEqNet"
+    "last","hisrep","simlpe_dct","mpt","simlpe_wave","spectral",
+    "estag","hstgcnn","trajdep","pgbig","motionmixer","eqmotion","physmamba","SFgDNet","SplineEqNet"
 ]
 PRED_SUFFIX = "_pred.pt"
 TARGET_PATH = os.path.join(BASE_DIR, "last_target.pt")  # shared target for all models
@@ -24,18 +24,19 @@ TARGET_PATH = os.path.join(BASE_DIR, "last_target.pt")  # shared target for all 
 HANDS = 2             # 1=first 21 joints (same as before), 2=last 21 joints
 N_HAND = 21          # number of joints to show per hand
 N_COLS = 10          # time samples across columns
-SAMPLE_B = 0        # which sequence in batch to render
+SAMPLE_B = 2        # which sequence in batch to render
 LINE_W = 2.0
 COLOR_PRED = (0.05, 0.2, 0.9)    # blue
 COLOR_TGT  = (0.08, 0.62, 0.08)  # green
-ELEV = -20                        # 3D view elevation
-AZIM = -70                       # 3D view azimuth
+ELEV = -10                        # 3D view elevation
+AZIM = -50                       # 3D view azimuth
 PADDING_FRAC = 0.05              # per-panel padding (fraction of span)
 MIN_EXTENT = 1e-3                # minimal per-axis extent to avoid singular limits
 # ---------------------------------------
 
 # Pretty labels for plot
 LABEL_MAP = {
+    "spectral": "Spectral",
     "simlpe_dct": "siMLPe",
     "SFgDNet": "SFGdNet",
     "SplineEqNet": "SplineEqNet",
@@ -47,7 +48,9 @@ LABEL_MAP = {
     "trajdep": "TrajDep",
     "pgbig": "PGBig",
     "motionmixer": "MotionMixer",
-    "eqmotion": "EqMotion"
+    "eqmotion": "EqMotion",
+    "physmamba": "PhysMamba",
+    "simlpe_wave": "SimlpeWave",
 }
 
 # MediaPipe-like 21-joint hand skeleton:

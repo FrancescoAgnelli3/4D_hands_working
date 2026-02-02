@@ -14,9 +14,11 @@ __all__ = ["train"]
 from models.mpt import model_4GRU
 from models.simlpe import SiMLPeConfig, SiMLPeForecaster
 from models.simlpe_dct import SiMLPeDCTConfig, SiMLPeDCTForecaster
+from models.two_stage_dct_diffusion import TwoStageDCTDiffusionConfig, TwoStageDCTDiffusionForecaster
 from models.simlpe_wave import SiMLPeWaveletConfig, SiMLPeWaveletForecaster
 from models.SFgDNet import SFgDNetConfig, SFgDNetForecaster
 from models.SplineEqNet import SplineEqNetConfig, SplineEqNetForecaster
+from models.physmamba import HandForecastConfig, HandMotionForecasterResidual
 from models import hisrep as hisrep_module
 from models import hisrep_hand as hisrep_handmodule
 from models import hisrep_rigidwrist as hisrep_rigidwrist_module
@@ -147,6 +149,7 @@ def train(
     if model == "estag":
         epochs =5
     learning_rate = float(lr if lr is not None else config.get("learning_rate", 1e-3))
+    twostage_diffusion_epochs = int(config.get("twostage_diffusion_epochs", 0))
     dct_keep_coeffs_cfg = config.get("dct_keep_coeffs")
     dct_keep_coeffs = int(dct_keep_coeffs_cfg) if dct_keep_coeffs_cfg is not None else None
     dual_prefix = "SFgDNet" if model == "SFgDNet" else "SplineEqNet" if model == "SplineEqNet" else None
@@ -308,12 +311,15 @@ def train(
     simlpe = None
     sfgdnet_model = None
     SplineEqNet_model = None
+    physmamba_model = None
     params: List[torch.nn.Parameter] = []
     eqmotion_model = None
     trajdep = None
     pgbig_model = None
     motion_mixer = None
     factorized_loss = None
+    twostage_model = None
+    twostage_phase: Optional[str] = None
     def _parse_fixed_centers_cfg(raw_value: Any) -> Optional[Tuple[float, float]]:
         if raw_value is None:
             return None
@@ -614,7 +620,69 @@ def train(
         params = list(simlpe_dct.parameters())
         optimizer = torch.optim.Adam(params, lr=learning_rate)
         params_count = _print_model_parameters(simlpe_dct, title="SiMLPeDCTForecaster")
+
+    elif model == "twostage_dct_diffusion":
+        # Two-stage: coarse low-band DCT predictor + conditional diffusion over high bands.
+        k_low = int(config.get("twostage_k_low", 16))
+        diff_steps = int(config.get("twostage_diffusion_steps", 100))
+        ddim_steps = int(config.get("twostage_ddim_steps", 50))
+        d_model = int(config.get("twostage_denoiser_dim", 256))
+        depth = int(config.get("twostage_denoiser_depth", 6))
+        n_heads = int(config.get("twostage_denoiser_heads", 8))
+        p_drop = float(config.get("twostage_dropout", 0.0))
+        freeze_coarse = bool(config.get("twostage_freeze_coarse", True))
+
+        tw_cfg = TwoStageDCTDiffusionConfig(
+            input_length=input_n,
+            pred_length=output_n,
+            num_nodes=node_num,
+            hidden_dim=hidden_size,
+            num_layers=gru_layers,
+            k_low=k_low,
+            diffusion_steps=diff_steps,
+            ddim_steps=ddim_steps,
+            denoiser_dim=d_model,
+            denoiser_depth=depth,
+            denoiser_heads=n_heads,
+            dropout=p_drop,
+            freeze_coarse=freeze_coarse,
+            simlpe_use_norm=bool(config.get("simlpe_use_norm", True)),
+            simlpe_spatial_fc_only=bool(config.get("simlpe_spatial_fc_only", False)),
+            simlpe_mix_spatial_temporal=bool(config.get("simlpe_mix_spatial_temporal", False)),
+            simlpe_norm_axis=str(config.get("simlpe_norm_axis", "spatial")),
+            simlpe_add_last_offset=bool(config.get("simlpe_add_last_offset", True)),
+        )
+        twostage_model = TwoStageDCTDiffusionForecaster(tw_cfg).to(device)
+
+        def _set_twostage_phase(phase: str) -> List[torch.nn.Parameter]:
+            nonlocal twostage_phase
+            if phase == "coarse":
+                for p in twostage_model.coarse.parameters():
+                    p.requires_grad = True
+                for p in twostage_model.diffusion.parameters():
+                    p.requires_grad = False
+                twostage_phase = "coarse"
+                return [p for p in twostage_model.coarse.parameters() if p.requires_grad]
+            if phase == "diffusion":
+                twostage_model.coarse.eval()
+                for p in twostage_model.coarse.parameters():
+                    p.requires_grad = False
+                for p in twostage_model.diffusion.parameters():
+                    p.requires_grad = True
+                twostage_phase = "diffusion"
+                return [p for p in twostage_model.diffusion.parameters() if p.requires_grad]
+            raise ValueError(f"Unknown twostage phase: {phase}")
+
+        params = _set_twostage_phase("coarse")
+        optimizer = torch.optim.Adam(params, lr=learning_rate)
+        params_count = _print_model_parameters(twostage_model, title="TwoStageDCTDiffusionForecaster")
     elif model == "simlpe_wave":
+        wavelet_num_scales = config.get("simlpe_wave_num_scales")
+        wavelet_name = config.get("simlpe_wave_wavelet", "db2")
+        wavelet_mode = config.get("simlpe_wave_wavelet_mode", "symmetric")
+        padding_predictor = config.get("simlpe_wave_padding_predictor", "mlp")
+        if padding_predictor is None:
+            padding_predictor = "mlp"
         sim_cfg = SiMLPeWaveletConfig(
             input_length=input_n,
             pred_length=output_n,
@@ -623,15 +691,34 @@ def train(
             num_layers=gru_layers,
             use_norm=bool(config.get("simlpe_wave_use_norm", True)),
             norm_axis=str(config.get("simlpe_wave_norm_axis", "all")),
-            add_last_offset_time_domain=bool(config.get("simlpe_wave_add_last_offset", False)),
-            wavelet=str(config.get("simlpe_wave_wavelet", "db4")),
-            swt_level=int(config.get("simlpe_wave_swt_level", 5)),
-            include_approx=bool(config.get("simlpe_wave_include_approx", True)),
+            add_last_offset=bool(config.get("simlpe_wave_add_last_offset", False)),
+            padding_mode=config.get("simlpe_wave_padding_mode", None),
+            padding_predictor=str(padding_predictor),
+            padding_full_horizon=bool(config.get("simlpe_wave_padding_full_horizon", False)),
+            num_scales=int(wavelet_num_scales) if wavelet_num_scales is not None else None,
+            wavelet=str(wavelet_name),
+            wavelet_mode=str(wavelet_mode),
         )
         simlpe_wave = SiMLPeWaveletForecaster(sim_cfg).to(device)
         params = list(simlpe_wave.parameters())
         optimizer = torch.optim.Adam(params, lr=learning_rate)
         params_count = _print_model_parameters(simlpe_wave, title="SiMLPeWaveletForecaster")
+    elif model == "physmamba":
+        phys_cfg = HandForecastConfig(
+            n_landmarks=node_num,
+            coord_dim=3,
+            t_out=output_n,
+            n_layers=int(config.get("t_layers", 2)),
+            d_state=int(config.get("physmamba_d_state", 16)),
+            d_conv=int(config.get("physmamba_d_conv", 4)),
+            expand=int(config.get("physmamba_expand", 2)),
+            dropout=float(config.get("physmamba_dropout", 0.1)),
+            decoder_conv_kernel=int(config.get("physmamba_decoder_kernel", 5)),
+        )
+        physmamba_model = HandMotionForecasterResidual(phys_cfg).to(device)
+        params = list(physmamba_model.parameters())
+        optimizer = torch.optim.Adam(params, lr=learning_rate)
+        params_count = _print_model_parameters(physmamba_model, title="HandMotionForecasterResidual")
     elif model == "SFgDNet":
         sfgdnet_model = _build_dual_branch_model(
             prefix="SFgDNet",
@@ -710,8 +797,12 @@ def train(
         model_modules = {"simlpe": simlpe}
     elif model == "simlpe_dct" and 'simlpe_dct' in locals():
         model_modules = {"simlpe_dct": simlpe_dct}
+    elif model == "twostage_dct_diffusion" and twostage_model is not None:
+        model_modules = {"twostage": twostage_model}
     elif model == "simlpe_wave" and 'simlpe_wave' in locals():
         model_modules = {"simlpe_wave": simlpe_wave}
+    elif model == "physmamba" and physmamba_model is not None:
+        model_modules = {"physmamba": physmamba_model}
     elif model == "SFgDNet" and sfgdnet_model is not None:
         model_modules = {"SFgDNet": sfgdnet_model}
     elif model == "SplineEqNet" and SplineEqNet_model is not None:
@@ -759,7 +850,7 @@ def train(
         collect_examples: bool = False,
         restore_train: bool = True,
         save_examples: bool = False,
-    ) -> Optional[Dict[str, float]]:
+        ) -> Optional[Dict[str, float]]:
         if eval_loader is None:
             return None
         total_loss = 0.0
@@ -825,8 +916,16 @@ def train(
                         recons = simlpe(in_3d)
                     elif model == "simlpe_dct":
                         recons = simlpe_dct(in_3d)
+
+                    elif model == "twostage_dct_diffusion":
+                        if twostage_phase == "coarse":
+                            recons = twostage_model.coarse(in_3d)
+                        else:
+                            recons = twostage_model.predict(in_3d, deterministic=True)
                     elif model == "simlpe_wave":
                         recons = simlpe_wave(in_3d)
+                    elif model == "physmamba":
+                        recons = physmamba_model(in_3d)
                     elif model in ("SFgDNet", "SplineEqNet"):
                         dual_model = _get_active_dual_model()
                         if dual_model is None:
@@ -924,8 +1023,9 @@ def train(
         }
 
     # Optional LR scheduler that reduces LR on plateau of the monitored loss
+    use_lr_scheduler = bool(config.get("use_lr_scheduler", True))
     scheduler = None
-    if optimizer is not None and bool(config.get("use_lr_scheduler", True)):
+    if optimizer is not None and use_lr_scheduler:
         scheduler = ReduceLROnPlateau(
             optimizer,
             mode='min',
@@ -963,7 +1063,26 @@ def train(
         layers = U.find_semskeconvs(gen_x, gen_y, gen_z, gen_v)
         U.print_semskeconv_stats(U.semskeconv_stats(layers), prefix="[GCN][epoch 000]")
 
-    for epoch in range(1, train_epochs + 1):
+    total_epochs = train_epochs
+    if model == "twostage_dct_diffusion":
+        total_epochs = train_epochs + max(0, twostage_diffusion_epochs)
+
+    for epoch in range(1, total_epochs + 1):
+        if model == "twostage_dct_diffusion" and twostage_phase == "coarse":
+            if twostage_diffusion_epochs > 0 and epoch == train_epochs + 1:
+                params = _set_twostage_phase("diffusion")
+                optimizer = torch.optim.Adam(params, lr=learning_rate * 0.1)
+                if use_lr_scheduler:
+                    scheduler = ReduceLROnPlateau(
+                        optimizer,
+                        mode='min',
+                        factor=float(config.get("lr_factor", 0.5)),
+                        patience=int(config.get("lr_patience", 5)),
+                        threshold=float(config.get("lr_threshold", 1e-4)),
+                        cooldown=int(config.get("lr_cooldown", 0)),
+                        min_lr=float(config.get("lr_min", 0.0))
+                    )
+                print(f"[Info] Switched to twostage diffusion training for {twostage_diffusion_epochs} epochs.")
         _set_mode(True)
         running = 0.0
         score_running = 0.0
@@ -1009,6 +1128,7 @@ def train(
 
             B, T_out, N = tgt_3d.shape[0], tgt_3d.shape[1], tgt_3d.shape[2]
             aux = None
+            diffusion_loss = None
 
             if model == "mpt":
                 optimizer.zero_grad()
@@ -1041,9 +1161,20 @@ def train(
             elif model == "simlpe_dct":
                 optimizer.zero_grad()
                 recons = simlpe_dct(in_3d)
+
+            elif model == "twostage_dct_diffusion":
+                optimizer.zero_grad()
+                if twostage_phase == "diffusion":
+                    diffusion_loss, coarse_pred = twostage_model.diffusion_loss(in_3d, tgt_3d)
+                    recons = coarse_pred
+                else:
+                    recons = twostage_model.coarse(in_3d)
             elif model == "simlpe_wave":
                 optimizer.zero_grad()
                 recons = simlpe_wave(in_3d)
+            elif model == "physmamba":
+                optimizer.zero_grad()
+                recons = physmamba_model(in_3d)
             elif model in ("SFgDNet", "SplineEqNet"):
                 optimizer.zero_grad()
                 dual_model = _get_active_dual_model()
@@ -1087,6 +1218,7 @@ def train(
             elif model in ("hisrep", "hisrep_hand", "hisrep_rigidwrist"):
                 optimizer.zero_grad()
                 aux = None
+                diffusion_loss = None
                 if model == "hisrep_hand":
                     recons, aux = hisrep(in_3d, return_aux=True)
                 else:
@@ -1134,7 +1266,8 @@ def train(
                     epoch_masks.append(mask_tensor.view(-1).detach().cpu())
 
             # Loss: MPJPE + bone length regularization
-            # Compute mean over batch and horizon
+
+            # Base supervised loss (MPJPE).
             mpjpe_terms = torch.norm(recons - tgt_3d, dim=-1)  # (B, T_out, N)
             per_sample_mpjpe = mpjpe_terms.mean(dim=(1, 2))
             per_sample_mpjpe_norm = per_sample_mpjpe * norm_factor_t
@@ -1142,6 +1275,8 @@ def train(
             mpjpe_running += float(per_sample_mpjpe.sum().item())
             mpjpe_norm_running += float(per_sample_mpjpe_norm.sum().item())
 
+            apply_supervised_losses = not (model == "twostage_dct_diffusion" and twostage_phase == "diffusion")
+            loss = mpjpe_loss
 
             if model == "hisrep_hand":
                 gt_dirs, _ = hisrep_handmodule.compute_dirs_lens(tgt_3d, hisrep.parents)
@@ -1154,12 +1289,17 @@ def train(
                     pred_wrists=aux["pred_wrists"],
                     delta_lengths=aux.get("delta_lengths"))
             else:
-                # Optional bone-length loss on hand skeleton
-                if bone_loss_weight > 0:
-                    bl_loss = U.bone_length_loss_edges(recons, tgt_3d, edges_t)
-                    loss = mpjpe_loss + float(bone_loss_weight) * bl_loss
+                if model == "twostage_dct_diffusion" and twostage_phase == "diffusion":
+                    if diffusion_loss is None:
+                        raise RuntimeError("Expected diffusion_loss to be set for twostage_dct_diffusion.")
+                    loss = diffusion_loss
                 else:
-                    loss = mpjpe_loss
+                    # Optional bone-length loss on hand skeleton
+                    if bone_loss_weight > 0:
+                        bl_loss = U.bone_length_loss_edges(recons, tgt_3d, edges_t)
+                        loss = mpjpe_loss + float(bone_loss_weight) * bl_loss
+                    else:
+                        loss = mpjpe_loss
             
             if model == "SplineEqNet":
                 reg_model = _get_active_dual_model()
@@ -1179,7 +1319,7 @@ def train(
             tgt_velocity_mag = tgt_vel
             vel_mae_per_sample = (pred_velocity_mag - tgt_velocity_mag).abs().mean(dim=(1, 2))
             vel_loss = vel_mae_per_sample.mean()
-            if velocity_loss_weight > 0:
+            if apply_supervised_losses and velocity_loss_weight > 0:
                 loss = loss + velocity_loss_weight * vel_loss
             vel_running += float(vel_mae_per_sample.sum().item())
 
@@ -1191,7 +1331,7 @@ def train(
                     "test_weighted_mae": float('nan'),
                 }
 
-            if model in ("mpt", "estag", "simlpe", "simlpe_dct", "simlpe_wave", "SFgDNet", "SplineEqNet", "trajdep", "hisrep", "hisrep_hand", "hisrep_rigidwrist", "eqmotion", "pgbig", "motionmixer", "mamba", "cde", "hstgcnn", "gwnet"):
+            if model in ("mpt", "estag", "simlpe", "simlpe_dct", "twostage_dct_diffusion", "simlpe_wave", "physmamba", "SFgDNet", "SplineEqNet", "trajdep", "hisrep", "hisrep_hand", "hisrep_rigidwrist", "eqmotion", "pgbig", "motionmixer", "mamba", "cde", "hstgcnn", "gwnet"):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(params, max_norm=float(config.get("gradient_clip", 5.0)))
                 optimizer.step()
@@ -1243,7 +1383,9 @@ def train(
         avg_score = None
         avg_velocity_mae = None
         total_samples = 0
-        test_metrics = _evaluate_loader(test_loader, collect_examples=False, save_examples=save_eval_examples) if test_loader is not None else None
+        test_metrics = None
+        if model != "twostage_dct_diffusion" and test_loader is not None:
+            test_metrics = _evaluate_loader(test_loader, collect_examples=False, save_examples=save_eval_examples)
         if test_metrics is not None:
             avg_loss = float(test_metrics["mpjpe"])
             avg_loss_norm = float(test_metrics["mpjpe_norm"])

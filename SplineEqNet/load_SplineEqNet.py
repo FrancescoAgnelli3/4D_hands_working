@@ -339,11 +339,11 @@ def load_normalized_history_samples(
 
 def resolve_model_components(model_name: str | None) -> ModelComponents:
     normalized = (model_name or DEFAULT_MODEL_NAME).lower()
-    components = SUPPORTED_MODELS.get(normalized)
-    if components is None:
-        supported = ", ".join(sorted(SUPPORTED_MODELS))
-        raise ValueError(f"Unsupported model '{model_name}'. Supported models: {supported}")
-    return components
+    for key, components in SUPPORTED_MODELS.items():
+        if key.lower() == normalized:
+            return components
+    supported = ", ".join(sorted(SUPPORTED_MODELS))
+    raise ValueError(f"Unsupported model '{model_name}'. Supported models: {supported}")
 
 
 def _get_first_tag(parsed: dict[str, str | None], *keys: str) -> str | None:
@@ -566,7 +566,7 @@ def plot_gates(summaries: Sequence[ActionGateSummary], output: Path, mode: str) 
 
         for expert_idx in range(num_experts):
             ax = axes[expert_idx]
-            ax.set_title(f"Expert {expert_idx} gate", fontsize="medium")
+            ax.set_title(f"Gate {expert_idx}", fontsize="medium")
 
             for summary in summaries:
                 gates = summary.gates
@@ -648,16 +648,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    model_name = (args.model or DEFAULT_MODEL_NAME).lower()
+    model_name = args.model or DEFAULT_MODEL_NAME
     components = resolve_model_components(model_name)
+    model_prefix = components.model_key
     requested = None if not args.actions else [act.strip() for act in args.actions if act.strip()]
-    actions = list_actions(args.model_dir, model_name, args.dataset, requested)
+    actions = list_actions(args.model_dir, model_prefix, args.dataset, requested)
 
     summaries: list[ActionGateSummary] = []
     for action in actions:
         print(f"Loading action {action}...")
         summary = inspect_checkpoint(
-            model_name,
+            model_prefix,
             args.model_dir,
             args.dataset,
             action,
