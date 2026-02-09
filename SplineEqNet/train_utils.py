@@ -1008,17 +1008,17 @@ def train(
                                 recons = twostage_model.predict(in_3d, deterministic=True)
                             else:
                                 all_recons: List[torch.Tensor] = []
-                                all_errors: List[torch.Tensor] = []
+                                all_scores: List[torch.Tensor] = []
                                 for sample_idx in range(twostage_eval_best_of_k):
                                     sample_seed = int(batch_idx * 1000003 + sample_idx)
-                                    sampled_recons = twostage_model.predict(
+                                    sampled_recons, sampled_score = twostage_model.predict(
                                         in_3d,
                                         deterministic=False,
                                         seed=sample_seed,
+                                        return_score=True,
                                     )
-                                    sampled_error = torch.norm(sampled_recons - tgt_3d, dim=-1).mean(dim=(1, 2))
                                     all_recons.append(sampled_recons)
-                                    all_errors.append(sampled_error)
+                                    all_scores.append(sampled_score)
                                     if collect_twostage_tries and per_try_loss is not None and per_try_loss_norm is not None:
                                         mpjpe_terms_try = torch.norm(sampled_recons - tgt_3d, dim=-1)
                                         per_sample_mpjpe_try = mpjpe_terms_try.mean(dim=(1, 2))
@@ -1028,8 +1028,8 @@ def train(
                                 if not all_recons:
                                     raise RuntimeError("Failed to generate diffusion samples during evaluation.")
                                 stacked_recons = torch.stack(all_recons, dim=0)  # (K, B, T_out, N, 3)
-                                stacked_errors = torch.stack(all_errors, dim=0)  # (K, B)
-                                best_idx = torch.argmin(stacked_errors, dim=0)    # (B,)
+                                stacked_score = torch.stack(all_scores, dim=0)  # (K, B)
+                                best_idx = torch.argmin(stacked_score, dim=0)    # (B,)
                                 batch_selector = torch.arange(stacked_recons.size(1), device=stacked_recons.device)
                                 recons = stacked_recons[best_idx, batch_selector]  # (B, T_out, N, 3)
                     elif model == "simlpe_wave":

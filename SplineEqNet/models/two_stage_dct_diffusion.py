@@ -473,6 +473,7 @@ class TimeResidualConditionalDiffusion(nn.Module):
         seed: int = 0,
         steps: Optional[int] = None,
         eta: float = 0.0,
+        return_score: bool = False,
     ) -> torch.Tensor:
         """
         DDIM sampling for residual sequence in data units.
@@ -513,6 +514,8 @@ class TimeResidualConditionalDiffusion(nn.Module):
 
         clip = float(self.cfg.x0_clip)
 
+        score = torch.zeros(B, device=device, dtype=torch.float32) if return_score else None
+
         for idx in range(t_seq.numel()):
             t = int(t_seq[idx].item())
             t_batch = torch.full((B,), t, device=device, dtype=torch.long)
@@ -537,6 +540,8 @@ class TimeResidualConditionalDiffusion(nn.Module):
 
             # Need eps_hat for DDIM direction
             eps_hat = (x - sqrt_ab_t * x0) / (sqrt_omb_t + 1e-12)
+            if score is not None:
+                score = score + eps_hat.float().pow(2).sum(dim=(1, 2))
 
             if idx == t_seq.numel() - 1:
                 ab_prev = torch.tensor(1.0, device=device, dtype=x.dtype)
@@ -566,7 +571,10 @@ class TimeResidualConditionalDiffusion(nn.Module):
                 x = sqrt_ab_prev * x0 + sqrt_omb_prev * eps_hat
 
         # Denormalize once at end; return in the caller's expected dtype
-        return (x * s).to(dtype=history_flat.dtype)
+        out = (x * s).to(dtype=history_flat.dtype)
+        if score is None:
+            return out
+        return out, score
 
 
 # ----------------------------- Wrapper model ----------------------------------
@@ -614,8 +622,14 @@ class TwoStageDCTDiffusionForecaster(nn.Module):
         return loss, coarse_future
 
     @torch.no_grad()
-    def predict(self, history: torch.Tensor, deterministic: bool = True, seed: int = 0) -> torch.Tensor:
-        """Full two-stage prediction (single reconstruction). Signature unchanged."""
+    def predict(
+        self,
+        history: torch.Tensor,
+        deterministic: bool = True,
+        seed: int = 0,
+        return_score: bool = False,
+    ) -> torch.Tensor:
+        """Full two-stage prediction (single reconstruction)."""
         history_flat = self._flat_history(history)
 
         coarse_future = self.coarse(history)
@@ -628,10 +642,15 @@ class TwoStageDCTDiffusionForecaster(nn.Module):
             seed=seed,
             steps=self.cfg.ddim_steps,
             eta=0.0 if deterministic else 1.0,
+            return_score=return_score,
         )
 
+        if return_score:
+            residual_pred, score = residual_pred
         future_flat = coarse_future_flat + residual_pred
         future = future_flat.reshape(history.size(0), self.cfg.pred_length, self.cfg.num_nodes, 3)
+        if return_score:
+            return future, score
         return future
 
     def forward(self, history: torch.Tensor) -> torch.Tensor:
