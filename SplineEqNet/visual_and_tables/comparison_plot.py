@@ -5,36 +5,33 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-
 from pathlib import Path
 
-# ---------------- CONFIG ----------------
 # ---------------- CONFIG ----------------
 current_dir = Path(__file__).resolve().parent.parent
 BASE_DIR = os.path.join(current_dir, "examples")
 OUT_DIR = os.path.join(current_dir, "visual_and_tables")
 
 MODELS = [
-    "last","hisrep","simlpe_dct","mpt","simlpe_wave","spectral",
-    "estag","hstgcnn","trajdep","pgbig","motionmixer","eqmotion","physmamba","SFgDNet","SplineEqNet"
+    "last","hisrep","simlpe_dct","mpt","twostage_dct_diffusion","trajdep","pgbig","eqmotion"
 ]
 PRED_SUFFIX = "_pred.pt"
-TARGET_PATH = os.path.join(BASE_DIR, "last_target.pt")  # shared target for all models
+TARGET_PATH = os.path.join(BASE_DIR, "twostage_dct_diffusion_target.pt")  # shared target for all models
 
-HANDS = 2             # 1=first 21 joints (same as before), 2=last 21 joints
-N_HAND = 21          # number of joints to show per hand
-N_COLS = 10          # time samples across columns
-SAMPLE_B = 2        # which sequence in batch to render
+HANDS = 1
+N_HAND = 21
+N_COLS = 10
+SAMPLE_B = 1
 LINE_W = 2.0
-COLOR_PRED = (0.05, 0.2, 0.9)    # blue
-COLOR_TGT  = (0.08, 0.62, 0.08)  # green
-ELEV = -10                        # 3D view elevation
-AZIM = -50                       # 3D view azimuth
-PADDING_FRAC = 0.05              # per-panel padding (fraction of span)
-MIN_EXTENT = 1e-3                # minimal per-axis extent to avoid singular limits
+COLOR_PRED = (0.05, 0.2, 0.9)
+COLOR_TGT  = (0.08, 0.62, 0.08)
+ELEV = -50
+AZIM = -50
+PADDING_FRAC = 0.05
+MIN_EXTENT = 1e-3
+EPS_SCALE = 1e-12
 # ---------------------------------------
 
-# Pretty labels for plot
 LABEL_MAP = {
     "spectral": "Spectral",
     "simlpe_dct": "siMLPe",
@@ -51,13 +48,12 @@ LABEL_MAP = {
     "eqmotion": "EqMotion",
     "physmamba": "PhysMamba",
     "simlpe_wave": "SimlpeWave",
+    "twostage_dct_diffusion": "2S-DCT-Diffusion",
 }
 
-# MediaPipe-like 21-joint hand skeleton:
-# 0=wrist; thumb 1-4, index 5-8, middle 9-12, ring 13-16, pinky 17-20
 HAND_EDGES = [(4,19),(3,16),(2,13),(1,10),(19,18),(16,15),(13,12),(10,9),
-               (18,17),(15,14),(12,11),(9,8),(17,5),(14,5),(11,5),(8,5),
-               (0,7),(7,6),(6,5),(20,5),(17,14),(14,11),(11,8)]
+              (18,17),(15,14),(12,11),(9,8),(17,5),(14,5),(11,5),(8,5),
+              (0,7),(7,6),(6,5),(20,5),(17,14),(14,11),(11,8)]
 
 def load_tensor(path):
     x = torch.load(path, map_location="cpu")
@@ -68,9 +64,6 @@ def load_tensor(path):
     return x  # expected B,T,N,3
 
 def to_numpy_selected_hand(x, hand=HANDS):
-    """
-    Ensure shape is (B,T,N,3), then slice the requested 21-joint hand and return numpy.
-    """
     if not torch.is_tensor(x):
         x = torch.as_tensor(x)
     if x.dim() != 4 or x.shape[-1] != 3:
@@ -111,38 +104,52 @@ def format_axes_axless(ax, lo, hi):
     ax.set_box_aspect(extent)
     ax.set_axis_off()
 
+def frame_scale_only(P):
+    """
+    A scale proxy that does NOT translate: RMS distance of joints from origin.
+    """
+    return float(np.sqrt(np.mean(np.sum(P * P, axis=1))) + EPS_SCALE)
+
+def scale_pred_to_target_only(P_pred, P_tgt):
+    """
+    Scale P_pred so that its RMS-from-origin matches P_tgt at the same time.
+    No translation is applied.
+    """
+    sp = frame_scale_only(P_pred)
+    st = frame_scale_only(P_tgt)
+    s = st / sp
+    return P_pred * s
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # Load predictions (selected 21 joints)
+    # Target is required for "corresponding in time target" scaling
+    if not os.path.isfile(TARGET_PATH):
+        raise RuntimeError(f"Target not found: {TARGET_PATH}")
+    target = to_numpy_selected_hand(load_tensor(TARGET_PATH))  # (B,T,21,3)
+
+    # Load predictions
     loaded = {}
-    n_time = None
+    n_time = target.shape[1]
     for m in MODELS:
         ppath = os.path.join(BASE_DIR, f"{m}{PRED_SUFFIX}")
         if not os.path.isfile(ppath):
             print(f"[WARN] missing: {ppath} — skipping")
             continue
         P = to_numpy_selected_hand(load_tensor(ppath))  # (B,T,21,3)
-        if n_time is None:
-            n_time = P.shape[1]  # time at axis 1
+        if P.shape[1] != n_time:
+            raise ValueError(f"Time mismatch for {m}: pred T={P.shape[1]} vs target T={n_time}")
         loaded[m] = P
 
     if not loaded:
         raise RuntimeError("No prediction files found.")
 
-    # Shared target (selected 21 joints)
-    target = None
-    if os.path.isfile(TARGET_PATH):
-        target = to_numpy_selected_hand(load_tensor(TARGET_PATH))  # (B,T,21,3)
-    else:
-        print(f"[WARN] target not found: {TARGET_PATH}")
-
-    # Time samples
+    # Time samples (columns)
     cols = min(N_COLS, n_time)
-    ts = np.linspace(0, n_time - 1, cols).round().astype(int)  # actual frame indices shown on x-axis
+    ts = np.linspace(0, n_time - 1, cols).round().astype(int)
 
-    # Figure layout: model rows, separator, target row, time axis row
-    n_model_rows = len(loaded)
+    # Layout
+    n_model_rows = sum(1 for m in MODELS if m in loaded)
     height_ratios = [1.0] * n_model_rows + [0.06] + [1.0] + [0.20]
     fig_w = cols * 1.2
     fig_h = sum(height_ratios) * 1.4
@@ -150,21 +157,35 @@ def main():
     gs = GridSpec(len(height_ratios), cols, height_ratios=height_ratios,
                   hspace=0.12, wspace=0.02)
 
-    # Model rows
+    # Precompute per-column target bounds so every subplot in that column shares the same view
+    tgt_seq = target[SAMPLE_B]  # (T,21,3)
+    col_bounds = {}
+    for t in ts:
+        T_frame = tgt_seq[t]
+        lo, hi = bounds_with_padding(T_frame)
+        col_bounds[int(t)] = (lo, hi)
+
+    # Model rows: scale each prediction frame to the corresponding target frame (same t), scale-only
     row = 0
     for m in MODELS:
         if m not in loaded:
             continue
         label = LABEL_MAP.get(m, m)
-        Pseq = loaded[m][SAMPLE_B]  # (T,N,3)
+        Pseq = loaded[m][SAMPLE_B]  # (T,21,3)
         for ci, t in enumerate(ts):
             ax = fig.add_subplot(gs[row, ci], projection="3d")
-            P_frame = Pseq[t, :, :]  # (N,3) at time t
-            draw_skeleton_3d(ax, P_frame, HAND_EDGES, COLOR_PRED, alpha=1.0, lw=LINE_W)
-            lo, hi = bounds_with_padding(P_frame)
+            T_frame = tgt_seq[t]
+            P_frame = Pseq[t]
+
+            P_scaled = scale_pred_to_target_only(P_frame, T_frame)
+            draw_skeleton_3d(ax, P_scaled, HAND_EDGES, COLOR_PRED, alpha=1.0, lw=LINE_W)
+
+            lo, hi = col_bounds[int(t)]
             format_axes_axless(ax, lo, hi)
+
             if ci == 0:
-                ax.text2D(-0.05, 0.5, label, transform=ax.transAxes, va="center", ha="right", fontsize=10)
+                ax.text2D(-0.05, 0.5, label, transform=ax.transAxes,
+                          va="center", ha="right", fontsize=10)
         row += 1
 
     # Separator
@@ -175,20 +196,21 @@ def main():
                     color=(0.2, 0.2, 0.2), lw=1.0)
     row += 1
 
-    # Target row
-    if target is not None:
-        Tseq = target[SAMPLE_B]  # (T,21,3)
-        for ci, t in enumerate(ts):
-            ax = fig.add_subplot(gs[row, ci], projection="3d")
-            T_frame = Tseq[t, :, :]
-            draw_skeleton_3d(ax, T_frame, HAND_EDGES, COLOR_TGT, alpha=1.0, lw=LINE_W)
-            lo, hi = bounds_with_padding(T_frame)
-            format_axes_axless(ax, lo, hi)
-            if ci == 0:
-                ax.text2D(-0.05, 0.5, "target", transform=ax.transAxes, va="center", ha="right", fontsize=10)
-        row += 1
+    # Target row (unscaled)
+    for ci, t in enumerate(ts):
+        ax = fig.add_subplot(gs[row, ci], projection="3d")
+        T_frame = tgt_seq[t]
+        draw_skeleton_3d(ax, T_frame, HAND_EDGES, COLOR_TGT, alpha=1.0, lw=LINE_W)
 
-    # Time axis with frame numbers
+        lo, hi = col_bounds[int(t)]
+        format_axes_axless(ax, lo, hi)
+
+        if ci == 0:
+            ax.text2D(-0.05, 0.5, "target", transform=ax.transAxes,
+                      va="center", ha="right", fontsize=10)
+    row += 1
+
+    # Time axis
     ax_time = fig.add_subplot(gs[row, :])
     for k in ["top", "right", "left"]:
         ax_time.spines[k].set_visible(False)
@@ -201,14 +223,12 @@ def main():
                      arrowprops=dict(arrowstyle="->", lw=1.2),
                      xycoords=("data", "axes fraction"))
 
-    # Layout (avoid tight_layout with 3D)
-    plt.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.08, wspace=0.02, hspace=0.12)
+    plt.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.08,
+                        wspace=0.02, hspace=0.12)
 
-    # Save
-    save_path = os.path.join(OUT_DIR, "motion_comparison_hand21_3d_axless_BTN3.png")
+    save_path = os.path.join(OUT_DIR, "motion_comparison_hand21_3d_axless_BTN3_scaled_to_target_only.png")
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Saved figure to: {save_path}")
-    # plt.show()
 
 if __name__ == "__main__":
     main()

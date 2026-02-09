@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
-Two-stage DCT coarse + conditional diffusion refiner (TIME DOMAIN diffusion).
+Two-stage DCT coarse + conditional diffusion refiner (TIME DOMAIN diffusion) with v-pred.
 
-Drop-in replacement for the previous `two_stage_dct_diffusion.py`, keeping the same
-public API expected by your training code:
+Drop-in replacement for `two_stage_dct_diffusion.py`, keeping the same public API:
 
 - TwoStageDCTDiffusionConfig
 - TwoStageDCTDiffusionForecaster with:
     - .coarse(history) -> (B, T_out, N, 3)
     - .diffusion_loss(history, future_gt) -> (loss, coarse_future)
     - .predict(history, deterministic=True, seed=0) -> refined (B, T_out, N, 3)
-    - .forward(history): returns coarse in train mode, refined in eval mode (unchanged behavior)
+    - .forward(history): returns coarse in train mode, refined in eval mode
 
-Stage A (coarse): unchanged: predicts low-frequency DCT content of the total sequence
-                 and reconstructs a coarse future in time domain.
+Stage A (coarse): predicts low-frequency DCT content and reconstructs coarse future in time domain.
+Stage B (refiner): conditional diffusion over time-domain residual r = y_gt - y_coarse.
+Diffusion is trained and sampled in NORMALIZED residual space using EMA RMS scale s:
+    x0 = r / s
 
-Stage B (refiner): diffusion is now trained/sampled ONLY in time domain on the residual:
-    r = y_gt - y_coarse
-Conditioning: history (time-domain) + coarse future (time-domain).
-No frequency-domain targets are used in the diffusion stage.
+Denoiser predicts v (v-pred):
+    x_t = sqrt(ab) * x0 + sqrt(1-ab) * eps
+    v   = sqrt(ab) * eps - sqrt(1-ab) * x0
+This avoids the unstable division by sqrt(ab) used by epsilon-pred when computing x0 at high noise.
 
 This file assumes your project already provides:
 - models.simlpe_dct.SiMLPeConfig, SiMLPeBackbone, _build_dct_matrix
@@ -61,6 +62,21 @@ def _timestep_embedding(timesteps: torch.Tensor, dim: int, max_period: int = 10_
         emb = torch.cat([emb, torch.zeros(emb.size(0), 1, device=emb.device, dtype=emb.dtype)], dim=1)
     return emb
 
+def _make_ddim_timesteps(T: int, steps: int, device: torch.device) -> torch.Tensor:
+    """
+    Make a strictly decreasing integer timestep schedule with no duplicates.
+    Ensures inclusion of T-1 and 0.
+    """
+    if steps <= 1:
+        return torch.tensor([T - 1], device=device, dtype=torch.long)
+    base = torch.linspace(0, T - 1, steps, device=device)
+    idx = torch.round(base).long()
+    # Ensure endpoints exist
+    idx = torch.cat([idx, torch.tensor([0, T - 1], device=device, dtype=torch.long)], dim=0)
+    idx = torch.unique(idx, sorted=True)
+    idx = torch.flip(idx, dims=[0])  # descending
+    return idx
+
 
 # ----------------------------- Configs ----------------------------------------
 
@@ -97,6 +113,13 @@ class TwoStageDCTDiffusionConfig:
     freeze_coarse: bool = True
     stopgrad_coarse_condition: bool = True  # stop-grad coarse conditioning into diffusion during training
 
+    # Residual normalization (EMA RMS)
+    residual_ema_decay: float = 0.99
+    residual_rms_eps: float = 1e-6
+
+    # Sampling stabilizers
+    x0_clip: float = 3.0  # clip x0_hat in normalized space (0 disables)
+
     @property
     def total_length(self) -> int:
         return int(self.input_length + self.pred_length)
@@ -105,7 +128,7 @@ class TwoStageDCTDiffusionConfig:
     def feature_dim(self) -> int:
         return int(self.num_nodes * 3)
 
-    # Kept for backward-compat; no longer used by diffusion stage
+    # Kept for backward-compat; not used by diffusion stage
     @property
     def k_high(self) -> int:
         return int(max(0, self.total_length - self.k_low))
@@ -123,13 +146,11 @@ class CoarseDCTForecaster(nn.Module):
         if not (1 <= cfg.k_low <= T):
             raise ValueError(f"k_low must be in [1, {T}], got {cfg.k_low}")
 
-        # DCT matrices for total sequence.
-        dct = _build_dct_matrix(T)          # (T, T) orthonormal
-        idct = dct.t()                      # (T, T)
-        self.register_buffer("_dct_low", dct[: cfg.k_low, :], persistent=False)      # (K_low, T)
-        self.register_buffer("_idct_low", idct[:, : cfg.k_low], persistent=False)   # (T, K_low)
+        dct = _build_dct_matrix(T)  # (T, T) orthonormal
+        idct = dct.t()              # (T, T)
+        self.register_buffer("_dct_low", dct[: cfg.k_low, :], persistent=False)     # (K_low, T)
+        self.register_buffer("_idct_low", idct[:, : cfg.k_low], persistent=False)  # (T, K_low)
 
-        # siMLPe backbone works over sequences of length T and feature_dim channels.
         sim_cfg = SiMLPeConfig(
             input_length=cfg.input_length,
             pred_length=cfg.pred_length,
@@ -145,7 +166,6 @@ class CoarseDCTForecaster(nn.Module):
         self.backbone = SiMLPeBackbone(sim_cfg)
 
     def _pad_total(self, history: torch.Tensor) -> torch.Tensor:
-        # history: (B, T_in, N, 3) -> (B, T_in, F), pad to total length by repeating last frame
         _assert_shape(history, (None, self.cfg.input_length, self.cfg.num_nodes, 3), "history")
         B = history.size(0)
         flat = history.reshape(B, self.cfg.input_length, -1)
@@ -159,26 +179,23 @@ class CoarseDCTForecaster(nn.Module):
         dct_low = self._dct_low.unsqueeze(0).to(device=padded.device, dtype=padded.dtype)  # (1, K_low, T)
         low_coeffs = torch.matmul(dct_low, padded)  # (B, K_low, F)
 
-        # Build full-length coefficient tensor for the backbone (zeros for high bands).
         B, _, F = low_coeffs.shape
         coeffs_full = torch.zeros(B, self.cfg.total_length, F, device=padded.device, dtype=padded.dtype)
         coeffs_full[:, : self.cfg.k_low, :] = low_coeffs
 
-        pred_full = self.backbone(coeffs_full)  # (B, T, F) interpreted as coefficient sequence
-        pred_low = pred_full[:, : self.cfg.k_low, :]  # (B, K_low, F)
+        pred_full = self.backbone(coeffs_full)      # (B, T, F) treated as coefficient sequence
+        pred_low = pred_full[:, : self.cfg.k_low, :]
         return pred_low
 
     def forward(self, history: torch.Tensor) -> torch.Tensor:
         """Return coarse future in time domain. Shape: (B, T_out, N, 3)."""
         pred_low = self.predict_low_coeffs(history)  # (B, K_low, F)
-
         idct_low = self._idct_low.unsqueeze(0).to(device=pred_low.device, dtype=pred_low.dtype)  # (1, T, K_low)
         seq_low = torch.matmul(idct_low, pred_low)  # (B, T, F)
 
         future = seq_low[:, -self.cfg.pred_length :, :].reshape(
             history.size(0), self.cfg.pred_length, self.cfg.num_nodes, 3
         )
-
         if self.cfg.simlpe_add_last_offset:
             future = future + history[:, -1:, :, :]
         return future
@@ -228,7 +245,6 @@ class _Downsample1D(nn.Module):
         self.conv = nn.Conv1d(dim, dim, kernel_size=3, stride=2, padding=1, groups=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, L, D)
         x = x.transpose(1, 2)  # (B, D, L)
         x = self.conv(x)
         return x.transpose(1, 2)
@@ -262,6 +278,8 @@ class MRTimeTransformerDenoiser(nn.Module):
 
     Query tokens: noisy residual sequence over future horizon: (B, T_out, F).
     Conditioning tokens: concat(history, coarse_future): (B, T_in + T_out, F).
+
+    Output: predicted v in residual space (same shape as input residual).
     """
 
     def __init__(
@@ -281,17 +299,14 @@ class MRTimeTransformerDenoiser(nn.Module):
         self.t_out = int(t_out)
         self.d_model = int(d_model)
 
-        # Projections
         self.proj_q = nn.Linear(in_feat, d_model)
         self.proj_hist = nn.Linear(in_feat, d_model)
         self.proj_coarse = nn.Linear(in_feat, d_model)
 
-        # Learned positional embeddings
         self.pos_q = nn.Parameter(torch.zeros(1, t_out, d_model))
         self.pos_hist = nn.Parameter(torch.zeros(1, t_in, d_model))
         self.pos_coarse = nn.Parameter(torch.zeros(1, t_out, d_model))
 
-        # Timestep embedding + FiLM
         self.t_embed = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.SiLU(),
@@ -299,7 +314,6 @@ class MRTimeTransformerDenoiser(nn.Module):
         )
         self.film_blocks = nn.ModuleList([_FiLM(d_model, d_model) for _ in range(depth)])
 
-        # Conditioning encoder
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
@@ -311,7 +325,6 @@ class MRTimeTransformerDenoiser(nn.Module):
         )
         self.cond_encoder = nn.TransformerEncoder(enc_layer, num_layers=max(1, depth // 2))
 
-        # Decoder-like blocks (self-attn + cross-attn)
         self.blocks = nn.ModuleList([
             nn.TransformerDecoderLayer(
                 d_model=d_model,
@@ -325,11 +338,9 @@ class MRTimeTransformerDenoiser(nn.Module):
             for _ in range(depth)
         ])
 
-        # Multi-rate path over the future length axis
         self.down = _Downsample1D(d_model)
         self.up = _Upsample1D(d_model)
 
-        # Output projection to predicted noise in residual space
         self.out = nn.Linear(d_model, in_feat)
 
         nn.init.normal_(self.pos_q, std=0.02)
@@ -338,30 +349,26 @@ class MRTimeTransformerDenoiser(nn.Module):
 
     def forward(
         self,
-        r_noisy: torch.Tensor,      # (B, T_out, F)
+        x_noisy: torch.Tensor,      # (B, T_out, F)
         timesteps: torch.Tensor,    # (B,)
         history: torch.Tensor,      # (B, T_in, F)
         coarse_future: torch.Tensor # (B, T_out, F)
     ) -> torch.Tensor:
-        B = r_noisy.size(0)
-        _assert_shape(r_noisy, (B, self.t_out, self.in_feat), "r_noisy")
+        B = x_noisy.size(0)
+        _assert_shape(x_noisy, (B, self.t_out, self.in_feat), "x_noisy")
         _assert_shape(history, (B, self.t_in, self.in_feat), "history_flat")
         _assert_shape(coarse_future, (B, self.t_out, self.in_feat), "coarse_future_flat")
 
-        # Conditioning tokens
         h_hist = self.proj_hist(history) + self.pos_hist
         h_coarse = self.proj_coarse(coarse_future) + self.pos_coarse
         cond_tokens = torch.cat([h_hist, h_coarse], dim=1)  # (B, T_in + T_out, D)
         cond_ctx = self.cond_encoder(cond_tokens)
 
-        # Query tokens
-        h = self.proj_q(r_noisy) + self.pos_q  # (B, T_out, D)
+        h = self.proj_q(x_noisy) + self.pos_q  # (B, T_out, D)
 
-        # Time embedding
         te = _timestep_embedding(timesteps, self.d_model).to(dtype=h.dtype, device=h.device)
         te = self.t_embed(te)  # (B, D)
 
-        # Multi-rate branch
         h_down = self.down(h)
 
         for i, block in enumerate(self.blocks):
@@ -374,18 +381,20 @@ class MRTimeTransformerDenoiser(nn.Module):
             h_up = self.up(h_down, target_len=h.size(1))
             h = h + 0.5 * h_up
 
-        eps_hat = self.out(h)  # (B, T_out, F)
-        return eps_hat
+        v_hat = self.out(h)  # (B, T_out, F)
+        return v_hat
 
 
-# ----------------------------- Diffusion module (time-domain residual) ---------
+# ----------------------------- Diffusion module (time-domain residual, v-pred) -
 
 class TimeResidualConditionalDiffusion(nn.Module):
     def __init__(self, cfg: TwoStageDCTDiffusionConfig) -> None:
         super().__init__()
         self.cfg = cfg
-
         self.schedule = DiffusionSchedule(cfg.diffusion_steps, cfg.beta_schedule)
+
+        # Keep EMA in fp32 for numerical stability
+        self.register_buffer("ema_rms", torch.tensor(1.0, dtype=torch.float32))
 
         self.denoiser = MRTimeTransformerDenoiser(
             in_feat=cfg.feature_dim,
@@ -397,35 +406,63 @@ class TimeResidualConditionalDiffusion(nn.Module):
             dropout=cfg.dropout,
         )
 
-    def _schedule_tensors(self, device: torch.device, dtype: torch.dtype) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _schedule_tensors(
+        self, device: torch.device, dtype: torch.dtype
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return (
             self.schedule.alpha_bars.to(device=device, dtype=dtype),
             self.schedule.sqrt_alpha_bars.to(device=device, dtype=dtype),
             self.schedule.sqrt_one_minus_alpha_bars.to(device=device, dtype=dtype),
         )
 
+    def _residual_scale(self, residual_gt: torch.Tensor) -> torch.Tensor:
+        """
+        Returns scalar s (fp32) on residual_gt.device.
+        Updates EMA during training using detached residual RMS.
+        """
+        eps = float(self.cfg.residual_rms_eps)
+        decay = float(self.cfg.residual_ema_decay)
+
+        batch_rms = residual_gt.detach().float().pow(2).mean().sqrt()  # fp32 scalar on device
+        if self.training:
+            self.ema_rms.mul_(decay).add_(
+                batch_rms.to(device=self.ema_rms.device, dtype=self.ema_rms.dtype),
+                alpha=1.0 - decay,
+            )
+
+        s = torch.clamp(self.ema_rms.to(device=residual_gt.device), min=eps)  # fp32
+        return s
+
     def training_loss(
         self,
         *,
-        residual_gt: torch.Tensor,      # (B, T_out, F)
-        history_flat: torch.Tensor,     # (B, T_in, F)
-        coarse_future_flat: torch.Tensor# (B, T_out, F)
+        residual_gt: torch.Tensor,       # (B, T_out, F) in data units
+        history_flat: torch.Tensor,      # (B, T_in, F)
+        coarse_future_flat: torch.Tensor # (B, T_out, F)
     ) -> torch.Tensor:
         B = residual_gt.size(0)
         _assert_shape(residual_gt, (B, self.cfg.pred_length, self.cfg.feature_dim), "residual_gt")
 
+        # Normalize residual: x0 = r / s  (work in fp32 for stability)
+        s = self._residual_scale(residual_gt)  # fp32 scalar
+        x0 = residual_gt.float() / s
+
         device = residual_gt.device
-        alpha_bars, sqrt_alpha_bars, sqrt_one_minus_alpha_bars = self._schedule_tensors(device, residual_gt.dtype)
+        alpha_bars, sqrt_alpha_bars, sqrt_one_minus_alpha_bars = self._schedule_tensors(device, x0.dtype)
+
         t = torch.randint(0, self.cfg.diffusion_steps, (B,), device=device, dtype=torch.long)
-        eps = torch.randn_like(residual_gt)
+        eps = torch.randn_like(x0)
 
         sqrt_ab = sqrt_alpha_bars[t].view(B, 1, 1)
         sqrt_omb = sqrt_one_minus_alpha_bars[t].view(B, 1, 1)
 
-        r_t = sqrt_ab * residual_gt + sqrt_omb * eps
+        x_t = sqrt_ab * x0 + sqrt_omb * eps
 
-        eps_hat = self.denoiser(r_t, t, history_flat, coarse_future_flat)
-        return torch.mean((eps - eps_hat) ** 2)
+        # v target: v = sqrt(ab)*eps - sqrt(1-ab)*x0
+        v = sqrt_ab * eps - sqrt_omb * x0
+
+        v_hat = self.denoiser(x_t.to(dtype=history_flat.dtype), t, history_flat, coarse_future_flat).float()
+        return torch.mean((v - v_hat) ** 2)
 
     @torch.no_grad()
     def sample_ddim(
@@ -437,7 +474,11 @@ class TimeResidualConditionalDiffusion(nn.Module):
         steps: Optional[int] = None,
         eta: float = 0.0,
     ) -> torch.Tensor:
-        """DDIM sampling for residual sequence (eta=0 -> deterministic)."""
+        """
+        DDIM sampling for residual sequence in data units.
+
+        Sampling is done in normalized space; final output is multiplied by s.
+        """
         if steps is None:
             steps = self.cfg.ddim_steps
         steps = int(steps)
@@ -449,32 +490,56 @@ class TimeResidualConditionalDiffusion(nn.Module):
         gen = torch.Generator(device=device)
         gen.manual_seed(int(seed))
 
-        x = torch.randn(
+        # Use EMA scale (fp32) without updating
+        s = torch.clamp(self.ema_rms.to(device=device), min=float(self.cfg.residual_rms_eps))  # fp32 scalar
+
+        # Sample in normalized space (fp32 core)
+        x = 0.4*torch.randn(
             (B, self.cfg.pred_length, self.cfg.feature_dim),
             device=device,
-            dtype=history_flat.dtype,
+            dtype=torch.float32,
             generator=gen,
         )
 
         T = self.cfg.diffusion_steps
-        t_seq = torch.linspace(T - 1, 0, steps, device=device).long()
+        t_seq = _make_ddim_timesteps(T, steps, device=device)  # descending unique ints
 
-        alpha_bars, _, _ = self._schedule_tensors(device, history_flat.dtype)
+        t_max = int(1 * (T - 1))  # try 0.4–0.8
+        t_seq = t_seq[t_seq <= t_max]
+        if t_seq.numel() == 0 or int(t_seq[-1]) != 0:
+            t_seq = torch.cat([t_seq, torch.tensor([0], device=device, dtype=torch.long)])
 
-        for idx in range(len(t_seq)):
+        alpha_bars, _, _ = self._schedule_tensors(device, x.dtype)
+
+        clip = float(self.cfg.x0_clip)
+
+        for idx in range(t_seq.numel()):
             t = int(t_seq[idx].item())
             t_batch = torch.full((B,), t, device=device, dtype=torch.long)
 
-            ab_t = alpha_bars[t]
+            ab_t = alpha_bars[t]  # scalar
             sqrt_ab_t = torch.sqrt(ab_t)
             sqrt_omb_t = torch.sqrt(1.0 - ab_t)
 
-            eps_hat = self.denoiser(x, t_batch, history_flat, coarse_future_flat)
+            # Predict v (network runs in its dtype; cast to fp32 for math)
+            v_hat = self.denoiser(
+                x.to(dtype=history_flat.dtype),
+                t_batch,
+                history_flat,
+                coarse_future_flat,
+            ).float()
 
-            x0 = (x - sqrt_omb_t * eps_hat) / (sqrt_ab_t + 1e-12)
+            # Reconstruct x0 from v-pred (stable; no division by sqrt_ab_t)
+            x0 = sqrt_ab_t * x - sqrt_omb_t * v_hat
 
-            if idx == len(t_seq) - 1:
-                ab_prev = torch.tensor(1.0, device=device, dtype=history_flat.dtype)
+            if clip > 0.0:
+                x0 = torch.clamp(x0, -clip, clip)
+
+            # Need eps_hat for DDIM direction
+            eps_hat = (x - sqrt_ab_t * x0) / (sqrt_omb_t + 1e-12)
+
+            if idx == t_seq.numel() - 1:
+                ab_prev = torch.tensor(1.0, device=device, dtype=x.dtype)
             else:
                 t_prev = int(t_seq[idx + 1].item())
                 ab_prev = alpha_bars[t_prev]
@@ -483,17 +548,25 @@ class TimeResidualConditionalDiffusion(nn.Module):
             sqrt_omb_prev = torch.sqrt(1.0 - ab_prev)
 
             if eta != 0.0:
+                # DDIM with noise
                 sigma = eta * torch.sqrt((1 - ab_prev) / (1 - ab_t) * (1 - ab_t / ab_prev))
-                noise = torch.randn_like(x, generator=gen)
+                noise = torch.randn(
+                    x.shape,
+                    device=x.device,
+                    dtype=x.dtype,
+                    generator=gen,
+                )
                 x = (
                     sqrt_ab_prev * x0
                     + torch.sqrt(torch.clamp(sqrt_omb_prev**2 - sigma**2, min=0.0)) * eps_hat
                     + sigma * noise
                 )
             else:
+                # Deterministic DDIM
                 x = sqrt_ab_prev * x0 + sqrt_omb_prev * eps_hat
 
-        return x  # predicted residual sequence (approx x0 at end)
+        # Denormalize once at end; return in the caller's expected dtype
+        return (x * s).to(dtype=history_flat.dtype)
 
 
 # ----------------------------- Wrapper model ----------------------------------
@@ -520,24 +593,18 @@ class TwoStageDCTDiffusionForecaster(nn.Module):
 
     def diffusion_loss(self, history: torch.Tensor, future_gt: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Compute diffusion training loss (on time-domain residuals) and also return the coarse prediction for logging.
+        Compute diffusion training loss (v-pred in normalized residual space) and return coarse prediction for logging.
         Signature unchanged for your training code.
         """
-        history_flat = self._flat_history(history)  # (B, T_in, F)
+        history_flat = self._flat_history(history)
 
-        # Coarse future in time domain
         coarse_future = self.coarse(history)  # (B, T_out, N, 3)
-        coarse_future_flat = coarse_future.reshape(history.size(0), self.cfg.pred_length, -1)  # (B, T_out, F)
+        coarse_future_flat = coarse_future.reshape(history.size(0), self.cfg.pred_length, -1)
 
-        # Optionally stop-grad conditioning into diffusion
-        if self.cfg.stopgrad_coarse_condition:
-            coarse_cond = coarse_future_flat.detach()
-        else:
-            coarse_cond = coarse_future_flat
+        coarse_cond = coarse_future_flat.detach() if self.cfg.stopgrad_coarse_condition else coarse_future_flat
 
-        # Residual target in time domain: r = y_gt - y_coarse
-        future_gt_flat = self._flat_future(future_gt)  # (B, T_out, F)
-        residual_gt = future_gt_flat - coarse_future_flat.detach()  # always detach for target stability
+        future_gt_flat = self._flat_future(future_gt)
+        residual_gt = future_gt_flat - coarse_future_flat.detach()
 
         loss = self.diffusion.training_loss(
             residual_gt=residual_gt,
@@ -549,14 +616,12 @@ class TwoStageDCTDiffusionForecaster(nn.Module):
     @torch.no_grad()
     def predict(self, history: torch.Tensor, deterministic: bool = True, seed: int = 0) -> torch.Tensor:
         """Full two-stage prediction (single reconstruction). Signature unchanged."""
-        history_flat = self._flat_history(history)  # (B, T_in, F)
+        history_flat = self._flat_history(history)
 
-        # Coarse prediction (time domain)
-        coarse_future = self.coarse(history)  # (B, T_out, N, 3)
-        coarse_future_flat = coarse_future.reshape(history.size(0), self.cfg.pred_length, -1)  # (B, T_out, F)
+        coarse_future = self.coarse(history)
+        coarse_future_flat = coarse_future.reshape(history.size(0), self.cfg.pred_length, -1)
         coarse_cond = coarse_future_flat.detach() if self.cfg.stopgrad_coarse_condition else coarse_future_flat
 
-        # Sample residual in time domain
         residual_pred = self.diffusion.sample_ddim(
             history_flat=history_flat,
             coarse_future_flat=coarse_cond,
@@ -565,15 +630,11 @@ class TwoStageDCTDiffusionForecaster(nn.Module):
             eta=0.0 if deterministic else 1.0,
         )
 
-        # Refined future = coarse + residual
         future_flat = coarse_future_flat + residual_pred
         future = future_flat.reshape(history.size(0), self.cfg.pred_length, self.cfg.num_nodes, 3)
-
-        # IMPORTANT: do NOT add last offset here; coarse already applied it (if enabled).
         return future
 
     def forward(self, history: torch.Tensor) -> torch.Tensor:
-        # For compatibility with existing callers: during train, return coarse; during eval, return refined.
         if self.training:
             return self.coarse(history)
         return self.predict(history, deterministic=True, seed=0)

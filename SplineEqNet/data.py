@@ -1,55 +1,115 @@
 import glob
 import os
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Dict, Any
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-
 from config import DatasetCfg
 from datasets import AssemblyDataset, BigHandsDataset, FPHADataset, h2oDataset
+
+
+# ----------------------------
+# Hand group definitions
+# ----------------------------
 
 ASSEMBLY_HAND_GROUPS: Tuple[dict, ...] = (
     {
         "wrist_index": 5,
         "nodes": tuple(range(0, 21)),
-        "links": tuple([(4,19),(3,16),(2,13),(1,10),(19,18),(16,15),(13,12),(10,9),
-               (18,17),(15,14),(12,11),(9,8),(17,5),(14,5),(11,5),(8,5),
-               (0,7),(7,6),(6,5),(20,5),(17,14),(14,11),(11,8)]),
+        "links": tuple(
+            [
+                (4, 19),
+                (3, 16),
+                (2, 13),
+                (1, 10),
+                (19, 18),
+                (16, 15),
+                (13, 12),
+                (10, 9),
+                (18, 17),
+                (15, 14),
+                (12, 11),
+                (9, 8),
+                (17, 5),
+                (14, 5),
+                (11, 5),
+                (8, 5),
+                (0, 7),
+                (7, 6),
+                (6, 5),
+                (20, 5),
+                (17, 14),
+                (14, 11),
+                (11, 8),
+            ]
+        ),
     },
     {
         "wrist_index": 26,
         "nodes": tuple(range(21, 42)),
-        "links": tuple([(25,40),(24,37),(23,34),(22,31),(40,39),(37,36),(34,33),(31,30),
-               (39,38),(36,35),(33,32),(30,29),(38,26),(35,26),(32,26),(29,26),
-               (21,28),(28,27),(27,26),(41,26),(38,35),(35,32),(32,29)]),
+        "links": tuple(
+            [
+                (25, 40),
+                (24, 37),
+                (23, 34),
+                (22, 31),
+                (40, 39),
+                (37, 36),
+                (34, 33),
+                (31, 30),
+                (39, 38),
+                (36, 35),
+                (33, 32),
+                (30, 29),
+                (38, 26),
+                (35, 26),
+                (32, 26),
+                (29, 26),
+                (21, 28),
+                (28, 27),
+                (27, 26),
+                (41, 26),
+                (38, 35),
+                (35, 32),
+                (32, 29),
+            ]
+        ),
     },
 )
 
-H2O_HAND_GROUPS: Tuple[dict, ...] = (
-    {
-        "wrist_index": 5,
-        "nodes": tuple(range(0, 21)),
-        "links": tuple([(4,19),(3,16),(2,13),(1,10),(19,18),(16,15),(13,12),(10,9),
-               (18,17),(15,14),(12,11),(9,8),(17,5),(14,5),(11,5),(8,5),
-               (0,7),(7,6),(6,5),(20,5),(17,14),(14,11),(11,8)]),
-    },
-    {
-        "wrist_index": 26,
-        "nodes": tuple(range(21, 42)),
-        "links": tuple([(25,40),(24,37),(23,34),(22,31),(40,39),(37,36),(34,33),(31,30),
-               (39,38),(36,35),(33,32),(30,29),(38,26),(35,26),(32,26),(29,26),
-               (21,28),(28,27),(27,26),(41,26),(38,35),(35,32),(32,29)]),
-    },
-)
+H2O_HAND_GROUPS: Tuple[dict, ...] = ASSEMBLY_HAND_GROUPS
 
 BIGHAND_HAND_GROUPS: Tuple[dict, ...] = (
     {
         "wrist_index": 0,
         "nodes": tuple(range(0, 21)),
-        "links": tuple([(0, 1), (1, 6), (6, 7), (7, 8),(0, 2), (2, 9), (9, 10), (10, 11),(0, 3), (3, 12), (12, 13), (13, 14),(0, 4), (4, 15), (15, 16), (16, 17),(0, 5), (5, 18), (18, 19), (19, 20)])
+        "links": tuple(
+            [
+                (0, 1),
+                (1, 6),
+                (6, 7),
+                (7, 8),
+                (0, 2),
+                (2, 9),
+                (9, 10),
+                (10, 11),
+                (0, 3),
+                (3, 12),
+                (12, 13),
+                (13, 14),
+                (0, 4),
+                (4, 15),
+                (15, 16),
+                (16, 17),
+                (0, 5),
+                (5, 18),
+                (18, 19),
+                (19, 20),
+            ]
+        ),
     },
 )
 
@@ -57,49 +117,56 @@ FPHA_HAND_GROUPS: Tuple[dict, ...] = (
     {
         "wrist_index": 0,
         "nodes": tuple(range(0, 21)),
-        "links": tuple([(0,7),(7,6),(1,10),(10,9),(9,8),(2,13),(13,12),(12,11),(3,16),(16,15),(15,14),(4,19),(19,18),(18,17),(5,6),(5,8),(5,11),(5,14),(5,17)]),
+        "links": tuple(
+            [
+                (0, 7),
+                (7, 6),
+                (1, 10),
+                (10, 9),
+                (9, 8),
+                (2, 13),
+                (13, 12),
+                (12, 11),
+                (3, 16),
+                (16, 15),
+                (15, 14),
+                (4, 19),
+                (19, 18),
+                (18, 17),
+                (5, 6),
+                (5, 8),
+                (5, 11),
+                (5, 14),
+                (5, 17),
+            ]
+        ),
     },
 )
 
-def _build_edge_index(node_count: int, hand_groups: Tuple[dict, ...]) -> Tuple[Tuple[int, int], ...]:
-    edges: List[Tuple[int, int]] = [(i, i) for i in range(node_count)]
-    for group in hand_groups:
-        edges.extend(group["links"])
-    return tuple(edges)
 
-
-def _build_adjacency_matrix(node_count: int, hand_groups: Tuple[dict, ...]) -> Tuple[Tuple[int, ...], ...]:
-    adj = np.zeros((node_count, node_count), dtype=np.int32)
-    for i in range(node_count):
-        adj[i, i] = 1
-    for group in hand_groups:
-        for i, j in group["links"]:
-            if 0 <= i < node_count and 0 <= j < node_count:
-                adj[i, j] = 1
-                adj[j, i] = 1
-    return tuple(tuple(int(val) for val in row) for row in adj.tolist())
-
-
-DATASET_METADATA = {
+DATASET_METADATA: Dict[str, Dict[str, Any]] = {
     "assembly": {
         "dataset_cls": AssemblyDataset,
         "default_dir": "/mnt/turing-datasets/AssemblyHands/assembly101-download-scripts/data_our/",
         "default_action_filter": "pick_up_screwd",
         "hand_groups": ASSEMBLY_HAND_GROUPS,
-        "node_count": 42,
+        "default_wrist_indices": (5, 26),
+        "node_count": 21,
     },
     "h2o": {
         "dataset_cls": h2oDataset,
         "default_dir": "/mnt/turing-datasets/h2o/",
         "default_action_filter": "",
         "hand_groups": H2O_HAND_GROUPS,
-        "node_count": 42,
+        "default_wrist_indices": (5, 26),
+        "node_count": 21,
     },
     "bighands": {
         "dataset_cls": BigHandsDataset,
         "default_dir": "/mnt/turing-datasets/BigHands/BigHand2.2M/data/",
         "default_action_filter": "",
         "hand_groups": BIGHAND_HAND_GROUPS,
+        "default_wrist_indices": (0,),
         "node_count": 21,
     },
     "fpha": {
@@ -107,15 +174,10 @@ DATASET_METADATA = {
         "default_dir": "/mnt/turing-datasets/FPHA/data/",
         "default_action_filter": "",
         "hand_groups": FPHA_HAND_GROUPS,
+        "default_wrist_indices": (0,),
         "node_count": 21,
     },
 }
-
-for meta in DATASET_METADATA.values():
-    hand_groups = meta["hand_groups"]
-    meta["default_wrist_indices"] = tuple(group["wrist_index"] for group in hand_groups)
-    meta["edge_index"] = _build_edge_index(meta["node_count"], hand_groups)
-    meta["adjacency"] = _build_adjacency_matrix(meta["node_count"], hand_groups)
 
 
 def get_dataset_metadata(name: str) -> dict:
@@ -125,24 +187,16 @@ def get_dataset_metadata(name: str) -> dict:
     return DATASET_METADATA[key]
 
 
-def _median_bone_length(coords: np.ndarray, edges: List[Tuple[int, int]]) -> float:
-    lengths: List[np.ndarray] = []
-    for i, j in edges:
-        if i >= coords.shape[1] or j >= coords.shape[1]:
-            continue
-        diff = coords[:, i, :3] - coords[:, j, :3]
-        lengths.append(np.linalg.norm(diff, axis=-1))
-    if not lengths:
-        return 1.0
-    concatenated = np.concatenate(lengths, axis=0)
-    concatenated = concatenated[np.isfinite(concatenated)]
-    if concatenated.size == 0:
-        return 1.0
-    median = float(np.median(concatenated))
-    return median if median > 1e-8 else 1.0
+# ----------------------------
+# Outlier removal (unchanged)
+# ----------------------------
 
-
-def _remove_outliers_timewise(coords: np.ndarray, k: float = 5.0, max_drop_frac: float = 0.3, max_consecutive: int = 10) -> Optional[np.ndarray]:
+def _remove_outliers_timewise(
+    coords: np.ndarray,
+    k: float = 20.0,
+    max_drop_frac: float = 0.3,
+    max_consecutive: int = 10,
+) -> Optional[np.ndarray]:
     if coords.ndim != 3 or coords.shape[-1] != 3:
         return coords
     T = coords.shape[0]
@@ -173,7 +227,108 @@ def _remove_outliers_timewise(coords: np.ndarray, k: float = 5.0, max_drop_frac:
     return kept
 
 
-def calculate_embedding_wrist_centered(
+# ----------------------------
+# Canonical alignment: frame 0 wrist->middle to (1,0,0) + scale by that bone length
+# ----------------------------
+
+def _skel_defaults_for_middle(dataset: str) -> Tuple[int, int]:
+    """
+    Returns (wrist_local, middle_mcp_local) for a 21-joint hand in the common ordering.
+
+    IMPORTANT: This assumes a widely-used 21-joint layout:
+      wrist=0, thumb(1-4), index(5-8), middle(9-12), ring(13-16), pinky(17-20)
+    and uses middle MCP = 9.
+
+    Your current hand_groups use different wrist indices at the *global* level for Assembly/H2O.
+    We convert to local indexing per group; this function only returns the local middle MCP index.
+    """
+    return (0, 9)
+
+
+def _rotation_from_a_to_b(a: np.ndarray, b: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    """
+    Rodrigues rotation mapping unit vector a to unit vector b.
+    Returns 3x3 rotation matrix R such that a @ R == b (row-vector convention).
+    """
+    a = a.astype(np.float64)
+    b = b.astype(np.float64)
+    na = np.linalg.norm(a)
+    nb = np.linalg.norm(b)
+    if na < eps or nb < eps:
+        return np.eye(3, dtype=np.float32)
+    a = a / na
+    b = b / nb
+
+    v = np.cross(a, b)
+    s = np.linalg.norm(v)
+    c = float(np.dot(a, b))
+
+    if s < eps:
+        # a parallel or anti-parallel to b
+        if c > 0.0:
+            return np.eye(3, dtype=np.float32)
+        # 180° rotation: pick any axis orthogonal to a
+        axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(float(np.dot(axis, a))) > 0.9:
+            axis = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        axis = axis - float(np.dot(axis, a)) * a
+        axis = axis / np.maximum(np.linalg.norm(axis), eps)
+        # Rodrigues with angle pi: R = I + 2[K]^2 (since sin(pi)=0, 1-cos(pi)=2)
+        K = np.array(
+            [[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]], [-axis[1], axis[0], 0.0]],
+            dtype=np.float64,
+        )
+        R = np.eye(3, dtype=np.float64) + 2.0 * (K @ K)
+        return R.astype(np.float32)
+
+    axis = v / s
+    K = np.array(
+        [[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]], [-axis[1], axis[0], 0.0]],
+        dtype=np.float64,
+    )
+    R = np.eye(3, dtype=np.float64) + K * s + (K @ K) * (1.0 - c)
+    return R.astype(np.float32)
+
+
+def _align_and_scale_hand_frame0_wrist_middle(
+    hand: np.ndarray,
+    wrist_l: int,
+    middle_l: int,
+    eps: float = 1e-8,
+) -> Tuple[np.ndarray, float]:
+    """
+    Assumes hand is already wrist-centered (wrist at origin) for all frames.
+
+    Computes at frame 0:
+      u = hand[0, middle_l] - hand[0, wrist_l] (but wrist_l should be 0 after centering)
+    Scales entire hand by 1/||u|| so ||u|| becomes 1.
+    Rotates entire hand so u becomes exactly (1,0,0).
+
+    Returns (hand_aligned, scale_used), where scale_used is the original bone length ||u||.
+    """
+    u = hand[0, middle_l, :3] - hand[0, wrist_l, :3]
+    L = float(np.linalg.norm(u))
+    if not np.isfinite(L) or L < eps:
+        # Cannot define scale/rotation; return unchanged
+        return hand.astype(np.float32), 1.0
+
+    # scale so that bone length is 1
+    hand = (hand / L).astype(np.float32)
+
+    u_scaled = hand[0, middle_l, :3] - hand[0, wrist_l, :3]
+    a = u_scaled
+    b = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+    # R = _rotation_from_a_to_b(a, b, eps=eps)
+    # hand = (hand @ R).astype(np.float32)
+    return hand, L
+
+
+# ----------------------------
+# Loading + preprocessing (split + canonical alignment)
+# ----------------------------
+
+def calculate_embedding_wrist_centered_split_canonical(
     file: str,
     *,
     dataset: str,
@@ -181,19 +336,27 @@ def calculate_embedding_wrist_centered(
     time_interp: Optional[int] = None,
     window: Optional[int] = None,
     interpolation: str = "linear",
-) -> Optional[Tuple[np.ndarray, float]]:
+    split_hands: bool = True,
+    eps: float = 1e-8,
+) -> Optional[List[Tuple[np.ndarray, float]]]:
+    """
+    Returns a list with a SINGLE (coords_hand, norm_factor_hand):
+    the hand (among the groups) with larger motion energy.
+    """
     d = np.load(file)
     dataset_lower = dataset.lower()
     if dataset_lower in {"assembly"}:
         d = d.transpose(0, 1, 3, 2).reshape((d.shape[0], d.shape[1], d.shape[2] * d.shape[3]))
         d = np.transpose(d, (1, 2, 0))
     elif dataset_lower == "h2o":
-        d = d.transpose(1, 3, 2, 0).reshape(d.shape[1], d.shape[2]*d.shape[3], d.shape[0])
-    # fpha assumed already in (T, N, C) format
+        d = d.transpose(1, 3, 2, 0).reshape(d.shape[1], d.shape[2] * d.shape[3], d.shape[0])
+    # fpha assumed already (T, N, C)
+
     T, N, C = d.shape
     if C != 3:
         raise ValueError(f"Expected 3 coordinates, got {C} for {file}")
 
+    # wrist-centering (per group)
     centered = d.astype(np.float64, copy=True)
     for group in hand_groups:
         nodes = [idx for idx in group["nodes"] if idx < N]
@@ -204,63 +367,99 @@ def calculate_embedding_wrist_centered(
             origin = centered[:, wrist_idx, :3]
             centered[:, nodes, :3] -= origin[:, None, :]
 
-    centered_filtered = _remove_outliers_timewise(centered, k=20.0, max_drop_frac=0.3, max_consecutive=10)
+    centered_filtered = _remove_outliers_timewise(
+        centered, k=20.0, max_drop_frac=0.3, max_consecutive=10
+    )
     if centered_filtered is None:
         return None
 
-    if time_interp is not None and time_interp > 0 and time_interp != T:
-        t_orig = np.linspace(0, 1, T)
-        t_new = np.linspace(0, 1, time_interp)
-        out = np.zeros((time_interp, N, 3), dtype=d.dtype)
+    # time interpolation
+    if time_interp is not None and time_interp > 0 and time_interp != centered_filtered.shape[0]:
+        T0 = centered_filtered.shape[0]
+        t_orig = np.linspace(0.0, 1.0, T0)
+        t_new = np.linspace(0.0, 1.0, int(time_interp))
+        out = np.zeros((int(time_interp), N, 3), dtype=np.float64)
         for i in range(N):
             for k in range(3):
                 if interpolation == "linear":
-                    out[:, i, k] = np.interp(t_new, t_orig, d[:, i, k])
+                    out[:, i, k] = np.interp(t_new, t_orig, centered_filtered[:, i, k])
                 else:
                     try:
                         from scipy.interpolate import CubicSpline  # type: ignore
-                        cs = CubicSpline(t_orig, d[:, i, k])
+                        cs = CubicSpline(t_orig, centered_filtered[:, i, k])
                         out[:, i, k] = cs(t_new)
                     except Exception:
-                        out[:, i, k] = np.interp(t_new, t_orig, d[:, i, k])
-        d = out
-        T = time_interp
+                        out[:, i, k] = np.interp(t_new, t_orig, centered_filtered[:, i, k])
+        centered_filtered = out
 
-    coords_for_scale = centered_filtered
-    if window is not None and window > 0 and window < coords_for_scale.shape[0]:
-        coords_for_scale = coords_for_scale[:window]
+    # ---- per-hand processing + motion energy ----
+    hand_candidates: List[Tuple[np.ndarray, float, float]] = []
+    # tuple = (hand_coords, norm_factor, motion_energy)
 
-    scaled = centered_filtered.astype(np.float32, copy=True)
-    scale_values: List[float] = []
     for group in hand_groups:
-        nodes = [idx for idx in group["nodes"] if idx < coords_for_scale.shape[1]]
-        if not nodes:
+        nodes_global = [idx for idx in group["nodes"] if idx < N]
+        if not nodes_global:
             continue
-        edges = [(i, j) for i, j in group["links"] if i < coords_for_scale.shape[1] and j < coords_for_scale.shape[1]]
-        scale = _median_bone_length(coords_for_scale, edges) if edges else 1.0
-        if scale > 1e-8:
-            scaled[:, nodes, :3] /= scale
-            scale_values.append(scale)
 
-    norm_factor = float(sum(scale_values) / len(scale_values)) if scale_values else 1.0
-    return scaled, norm_factor
+        g2l = {g: li for li, g in enumerate(nodes_global)}
+        wrist_g = int(group["wrist_index"])
+        if wrist_g not in g2l:
+            continue
+        wrist_l = int(g2l[wrist_g])
+
+        hand = centered_filtered[:, nodes_global, :3].astype(np.float32, copy=True)
+
+        # canonical frame: wrist -> middle finger at frame 0
+        _, middle_l = _skel_defaults_for_middle(dataset)
+        if 0 <= middle_l < hand.shape[1]:
+            hand, L = _align_and_scale_hand_frame0_wrist_middle(
+                hand, wrist_l=wrist_l, middle_l=middle_l, eps=eps
+            )
+        else:
+            L = 1.0
+
+        # motion energy over window (or full sequence)
+        T_use = hand.shape[0]
+        T_win = T_use if window is None or window <= 0 else min(T_use, int(window))
+        if T_win < 2:
+            continue
+
+        diff = hand[1:T_win] - hand[: T_win - 1]
+        motion_energy = float(
+            np.mean(np.linalg.norm(diff, axis=-1))
+        )
+
+        hand_candidates.append((hand.astype(np.float32), float(L), motion_energy))
+
+    if not hand_candidates:
+        return None
+
+    # ---- select the most active hand ----
+    hand_candidates.sort(key=lambda x: x[2], reverse=True)
+    best_hand, best_norm, _ = hand_candidates[0]
+
+    return [(best_hand, best_norm)]
+
+
+# ----------------------------
+# Features (unchanged)
+# ----------------------------
 
 def compute_velocity(points: np.ndarray) -> np.ndarray:
     v = np.zeros_like(points)
     v[1:] = points[1:] - points[:-1]
-    denom = np.max(np.linalg.norm(points, axis=-1))
+    denom = np.max(np.linalg.norm(v, axis=-1))
     if denom > 0:
         v = v / denom
     return v
 
+
 def calculate_features(coords: np.ndarray) -> np.ndarray:
-    T, N, _ = coords.shape
     vel = compute_velocity(coords)
     dist = np.linalg.norm(vel, axis=-1, keepdims=True)
     angle = np.divide(vel, np.maximum(dist, 1e-8))
     feats = np.concatenate([angle, dist, coords], axis=-1)
     return feats.astype(np.float32)
-
 
 
 def collect_sequences_from_files_wrist_centered(
@@ -271,39 +470,43 @@ def collect_sequences_from_files_wrist_centered(
     dataset: str,
     time_interp: Optional[int] = None,
     window_norm: Optional[int] = None,
+    split_hands: bool = True,
 ) -> List[Tuple[np.ndarray, float]]:
     loaded: List[Tuple[np.ndarray, float]] = []
     for f in tqdm(files):
         try:
-            embedding = calculate_embedding_wrist_centered(
+            per_hand = calculate_embedding_wrist_centered_split_canonical(
                 f,
                 dataset=dataset,
                 hand_groups=hand_groups,
                 time_interp=time_interp,
                 window=window_norm,
                 interpolation="linear",
+                split_hands=split_hands,
             )
-            coords, norm_factor = embedding
-            loaded.append((coords, norm_factor))
+            if per_hand is None:
+                continue
+            for coords, norm_factor in per_hand:
+                loaded.append((coords, norm_factor))
         except Exception:
             pass
-            # print(f"Warning: failed to load {f}")
+
     seqs: List[Tuple[np.ndarray, float]] = []
     for coords, norm_factor in loaded:
-        d = coords[1:] - coords[:-1]
-        mean_d = np.linalg.norm(d, axis=-1).mean(axis=1)
-        # if mean_d.max() > 0.4:
-        #     continue
         feats = calculate_features(coords)
         if feats.shape[0] >= 4:
             seqs.append((feats, norm_factor))
     return seqs
 
 
+# ----------------------------
+# Dataset building / loaders (unchanged except split flags passthrough)
+# ----------------------------
+
 def build_datasets(ds_cfg: DatasetCfg) -> Tuple[Dataset, Dataset, Dataset]:
     metadata = get_dataset_metadata(ds_cfg.dataset)
     dataset_cls = metadata["dataset_cls"]
-    node_count = int(ds_cfg.node_count or metadata["node_count"])
+    node_count_full = int(ds_cfg.node_count or metadata["node_count"])
 
     base_hand_groups: Tuple[dict, ...] = metadata["hand_groups"]
     if ds_cfg.wrist_indices:
@@ -367,30 +570,37 @@ def build_datasets(ds_cfg: DatasetCfg) -> Tuple[Dataset, Dataset, Dataset]:
     input_n = int(ds_cfg.input_n)
     output_n = int(ds_cfg.output_n)
     window_norm = int(ds_cfg.window_norm) if ds_cfg.window_norm is not None else input_n
+
+    split_hands = bool(getattr(ds_cfg, "split_hands", True))
+
     train_sequences = collect_sequences_from_files_wrist_centered(
         train_files,
-        node_count=node_count,
+        node_count=node_count_full,
         hand_groups=hand_groups,
         dataset=ds_cfg.dataset,
         time_interp=ds_cfg.time_interp,
         window_norm=window_norm,
-    )
-    test_sequences = collect_sequences_from_files_wrist_centered(
-        test_files,
-        node_count=node_count,
-        hand_groups=hand_groups,
-        dataset=ds_cfg.dataset,
-        time_interp=ds_cfg.time_interp,
-        window_norm=window_norm,
+        split_hands=split_hands,
     )
     val_sequences = collect_sequences_from_files_wrist_centered(
         val_files,
-        node_count=node_count,
+        node_count=node_count_full,
         hand_groups=hand_groups,
         dataset=ds_cfg.dataset,
         time_interp=ds_cfg.time_interp,
         window_norm=window_norm,
+        split_hands=split_hands,
     )
+    test_sequences = collect_sequences_from_files_wrist_centered(
+        test_files,
+        node_count=node_count_full,
+        hand_groups=hand_groups,
+        dataset=ds_cfg.dataset,
+        time_interp=ds_cfg.time_interp,
+        window_norm=window_norm,
+        split_hands=split_hands,
+    )
+
     print(f"Built datasets with {len(train_sequences)} train, {len(val_sequences)} val, {len(test_sequences)} test sequences.")
     if not train_sequences or not test_sequences or not val_sequences:
         raise SystemExit("Not enough sequences to build loaders after split.")

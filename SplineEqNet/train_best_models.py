@@ -330,7 +330,7 @@ def main():
     ap.add_argument("--save-root", default=DEFAULT_SAVE_ROOT, help="Directory to store model artifacts.")
     ap.add_argument("--seed", type=int, default=None, help="Override random seed for dataset/build pipeline.")
     ap.add_argument("--eval-batch-mult", type=int, default=1, help="Multiplier for validation/test batch size.")
-    ap.add_argument("--epochs", type=int, default=70, help="Override the number of training epochs from the best config.")
+    ap.add_argument("--epochs", type=int, default=100, help="Override the number of training epochs from the best config.")
     ap.add_argument("--log-wandb", action="store_true", help="Enable logging to Weights & Biases.")
     ap.add_argument("--wandb-project", type=str, default=None, help="W&B project name.")
     ap.add_argument("--wandb-entity", type=str, default=None, help="W&B entity/team.")
@@ -340,6 +340,7 @@ def main():
     ap.add_argument("--save-SplineEqNet-mask", action="store_true", help="When set, persist the SplineEqNet mask values (m) for every training epoch.")
     ap.add_argument("--save-SplineEqNet-gates", action="store_true", help="When set, enable gate logging for the SplineEqNet variant.")
     ap.add_argument("--save-eval-examples", action="store_true", help="When set, persist evaluation examples (merged_pred/merged_tgt tensors) during validation/testing.")
+    ap.add_argument("--save-coarse-model", action="store_true", help="When set, save/load the twostage coarse model weights for this configuration.")
     ap.add_argument("--save-best-model", action="store_true", help="When set, persist the best model checkpoint into the examples directory.")
     ap.add_argument("--window", type=int,default=None, help="Optional override for the input window length (input_n).")
     ap.add_argument("--horizon",type=int,default=None,help="Optional override for the prediction horizon length (output_n).")
@@ -405,6 +406,7 @@ def main():
             train_cfg.save_SplineEqNet_mask = bool(args.save_SplineEqNet_mask)
             train_cfg.save_SplineEqNet_gates = bool(args.save_SplineEqNet_gates)
             train_cfg.save_eval_examples = bool(args.save_eval_examples)
+            train_cfg.save_coarse_model = bool(args.save_coarse_model)
 
             train_dataset, val_dataset, test_dataset = build_datasets(ds_cfg)
             train_loader, val_loader, test_loader = make_loaders(

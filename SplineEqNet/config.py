@@ -161,8 +161,8 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "gru_layers": 8,
         "gradient_clip": 10.0,
         "bone_loss_weight": 0.0,
-        "twostage_k_low": 100,
-        "twostage_diffusion_epochs": 500,
+        "twostage_k_low": 20,
+        "twostage_diffusion_epochs": 180,
         "twostage_diffusion_steps": 100,
         "twostage_ddim_steps": 50,
         "twostage_denoiser_dim": 256,
@@ -170,6 +170,8 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "twostage_denoiser_heads": 8,
         "twostage_dropout": 0.0,
         "twostage_freeze_coarse": True,
+        "twostage_residual_ema_decay": 0.99,
+        "twostage_residual_rms_eps": 1e-6,
         "twostage_mpjpe_weight": 0.0,
         "epochs": 50,
     },
@@ -291,7 +293,7 @@ class DatasetCfg:
     seed: int = 0
     wrist_indices: Tuple[int, ...] = ()
     dataset: str = "assembly"
-    node_count: int = 42
+    node_count: int = 21
     edge_index: Tuple[Tuple[int, int], ...] = tuple()
     adjacency: Tuple[Tuple[int, ...], ...] = tuple()
     subset_files: Optional[Tuple[str, ...]] = None
@@ -308,6 +310,7 @@ class TrainCfg:
     bone_loss_weight: float = 0.0
     velocity_loss_weight: float = 0.0
     save_eval_examples: bool = False
+    save_coarse_model: bool = False
     use_space: bool = True
     # Per-model additional knobs
     t_layers: int = 2        # used by estag variants

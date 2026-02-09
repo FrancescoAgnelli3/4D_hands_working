@@ -1,3 +1,4 @@
+import hashlib
 import math
 import os
 import random
@@ -46,12 +47,16 @@ def run_experiment(
     save_root: str,
     train_loader: DataLoader,
     val_loader: DataLoader,
-    test_loader: DataLoader,
+    test_loader: Optional[DataLoader],
     log_wandb: bool = False,
     wandb_project: Optional[str] = None,
     wandb_entity: Optional[str] = None,
     wandb_run_prefix: Optional[str] = None,
     save_best_model: bool = False,
+    load_model_path: Optional[str] = None,
+    twostage_eval_phase: Optional[str] = None,
+    twostage_eval_best_of_k: Optional[int] = None,
+    twostage_eval_collect_all: bool = False,
 ) -> Optional[Dict[str, float]]:
     """Run one training+evaluation experiment and return metrics."""
     set_global_seed(ds.seed)
@@ -202,6 +207,24 @@ def run_experiment(
         model_file = f"{train_cfg.model}_{ds.dataset}_{action_segment}.pt"
         config["best_model_path"] = os.path.join(examples_models_dir, model_file)
         config["best_model_tag"] = tag
+    if load_model_path:
+        config["load_model_path"] = str(load_model_path)
+    if twostage_eval_phase:
+        config["twostage_eval_phase"] = str(twostage_eval_phase)
+    if twostage_eval_best_of_k is not None:
+        config["twostage_eval_best_of_k"] = max(1, int(twostage_eval_best_of_k))
+    if twostage_eval_collect_all:
+        config["twostage_eval_collect_all"] = True
+    if train_cfg.save_coarse_model:
+        examples_models_dir = os.path.join(os.path.dirname(__file__), "examples", "models")
+        os.makedirs(examples_models_dir, exist_ok=True)
+        action_segment = ds.action_filter or "all"
+        action_segment = action_segment.replace(os.sep, "_").replace(" ", "_")
+        tag_hash = hashlib.sha1(tag.encode("utf-8")).hexdigest()[:12]
+        model_file = f"{train_cfg.model}_coarse_{ds.dataset}_{action_segment}_{tag_hash}.pt"
+        config["coarse_model_path"] = os.path.join(examples_models_dir, model_file)
+        config["coarse_model_tag"] = tag
+        config["save_coarse_model"] = True
     if train_cfg.dct_keep_coeffs is not None:
         config["dct_keep_coeffs"] = int(train_cfg.dct_keep_coeffs)
     if train_cfg.hisrep_hand_dct_n is not None:

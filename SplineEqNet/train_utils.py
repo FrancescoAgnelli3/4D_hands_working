@@ -133,8 +133,10 @@ def train(
             bucket[key] = scalar
 
     save_eval_examples = bool(config.get("save_eval_examples", False))
+    save_coarse_model = bool(config.get("save_coarse_model", False))
+    maybe_save_coarse_model = None
     params_count = 0
-    node_num = int(config.get("node_num", 42))
+    node_num = int(config.get("node_num", 21))
     input_n = int(config.get("input_n", 90))
     output_n = int(config.get("output_n", 42))
     hidden_size = int(config.get("hidden_size", 128))
@@ -150,6 +152,7 @@ def train(
         epochs =5
     learning_rate = float(lr if lr is not None else config.get("learning_rate", 1e-3))
     twostage_diffusion_epochs = int(config.get("twostage_diffusion_epochs", 0))
+    twostage_eval_best_of_k = max(1, int(config.get("twostage_eval_best_of_k", 1)))
     dct_keep_coeffs_cfg = config.get("dct_keep_coeffs")
     dct_keep_coeffs = int(dct_keep_coeffs_cfg) if dct_keep_coeffs_cfg is not None else None
     dual_prefix = "SFgDNet" if model == "SFgDNet" else "SplineEqNet" if model == "SplineEqNet" else None
@@ -631,6 +634,8 @@ def train(
         n_heads = int(config.get("twostage_denoiser_heads", 8))
         p_drop = float(config.get("twostage_dropout", 0.0))
         freeze_coarse = bool(config.get("twostage_freeze_coarse", True))
+        residual_ema_decay = float(config.get("twostage_residual_ema_decay", 0.99))
+        residual_rms_eps = float(config.get("twostage_residual_rms_eps", 1e-6))
 
         tw_cfg = TwoStageDCTDiffusionConfig(
             input_length=input_n,
@@ -646,6 +651,8 @@ def train(
             denoiser_heads=n_heads,
             dropout=p_drop,
             freeze_coarse=freeze_coarse,
+            residual_ema_decay=residual_ema_decay,
+            residual_rms_eps=residual_rms_eps,
             simlpe_use_norm=bool(config.get("simlpe_use_norm", True)),
             simlpe_spatial_fc_only=bool(config.get("simlpe_spatial_fc_only", False)),
             simlpe_mix_spatial_temporal=bool(config.get("simlpe_mix_spatial_temporal", False)),
@@ -653,6 +660,47 @@ def train(
             simlpe_add_last_offset=bool(config.get("simlpe_add_last_offset", True)),
         )
         twostage_model = TwoStageDCTDiffusionForecaster(tw_cfg).to(device)
+        coarse_model_path = str(config.get("coarse_model_path", "")).strip() if save_coarse_model else ""
+        coarse_model_saved = False
+
+        def _maybe_save_coarse_model() -> None:
+            nonlocal coarse_model_saved
+            if not coarse_model_path or coarse_model_saved:
+                return
+            if os.path.exists(coarse_model_path):
+                coarse_model_saved = True
+                return
+            os.makedirs(os.path.dirname(coarse_model_path), exist_ok=True)
+            torch.save(
+                {
+                    "coarse_state": twostage_model.coarse.state_dict(),
+                    "metadata": {
+                        "tag": config.get("coarse_model_tag"),
+                        "model": model,
+                        "dataset": config.get("dataset"),
+                    },
+                },
+                coarse_model_path,
+            )
+            coarse_model_saved = True
+            print(f"[Info] Saved coarse model to {coarse_model_path}")
+
+        maybe_save_coarse_model = _maybe_save_coarse_model
+
+        if coarse_model_path and os.path.exists(coarse_model_path):
+            try:
+                payload = torch.load(coarse_model_path, map_location=device)
+                if isinstance(payload, dict) and "coarse_state" in payload:
+                    state = payload["coarse_state"]
+                else:
+                    state = payload
+                missing, unexpected = twostage_model.coarse.load_state_dict(state, strict=False)
+                if missing or unexpected:
+                    print(f"[Warning] Coarse model load had missing={len(missing)} unexpected={len(unexpected)} keys.")
+                coarse_model_saved = True
+                print(f"[Info] Loaded coarse model from {coarse_model_path}")
+            except Exception as exc:
+                print(f"[Warning] Failed to load coarse model from {coarse_model_path}: {exc}")
 
         def _set_twostage_phase(phase: str) -> List[torch.nn.Parameter]:
             nonlocal twostage_phase
@@ -674,6 +722,9 @@ def train(
             raise ValueError(f"Unknown twostage phase: {phase}")
 
         params = _set_twostage_phase("coarse")
+        eval_phase = str(config.get("twostage_eval_phase", "")).strip().lower()
+        if eval_phase in {"coarse", "diffusion"} and train_epochs <= 0:
+            params = _set_twostage_phase(eval_phase)
         optimizer = torch.optim.Adam(params, lr=learning_rate)
         params_count = _print_model_parameters(twostage_model, title="TwoStageDCTDiffusionForecaster")
     elif model == "simlpe_wave":
@@ -844,6 +895,27 @@ def train(
             return SplineEqNet_model
         return None
 
+    load_model_path = str(config.get("load_model_path", "")).strip()
+    if load_model_path:
+        if os.path.exists(load_model_path):
+            try:
+                payload = torch.load(load_model_path, map_location=device)
+                if isinstance(payload, dict):
+                    if "best_model_state" in payload:
+                        state = payload["best_model_state"]
+                    elif "model_state" in payload:
+                        state = payload["model_state"]
+                    else:
+                        state = payload
+                else:
+                    state = payload
+                _load_state(state)
+                print(f"[Info] Loaded model checkpoint from {load_model_path}")
+            except Exception as exc:
+                print(f"[Warning] Failed to load checkpoint from {load_model_path}: {exc}")
+        else:
+            print(f"[Warning] Checkpoint not found at {load_model_path}")
+
     def _evaluate_loader(
         eval_loader: Optional[DataLoader],
         *,
@@ -861,11 +933,22 @@ def train(
         collect_for_saving = bool(collect_examples and save_examples)
         collected_preds: List[torch.Tensor] = []
         collected_tgts: List[torch.Tensor] = []
+        collect_twostage_tries = (
+            bool(config.get("twostage_eval_collect_all", False))
+            and model == "twostage_dct_diffusion"
+            and twostage_phase != "coarse"
+            and twostage_eval_best_of_k > 1
+        )
+        per_try_loss: Optional[List[float]] = None
+        per_try_loss_norm: Optional[List[float]] = None
+        if collect_twostage_tries:
+            per_try_loss = [0.0 for _ in range(twostage_eval_best_of_k)]
+            per_try_loss_norm = [0.0 for _ in range(twostage_eval_best_of_k)]
 
         _set_mode(False)
         try:
             with torch.no_grad():
-                for batch in eval_loader:
+                for batch_idx, batch in enumerate(eval_loader):
                     if isinstance(batch, (list, tuple)):
                         if len(batch) < 2:
                             raise ValueError("Loader batch must provide input and target tensors.")
@@ -921,7 +1004,34 @@ def train(
                         if twostage_phase == "coarse":
                             recons = twostage_model.coarse(in_3d)
                         else:
-                            recons = twostage_model.predict(in_3d, deterministic=True)
+                            if twostage_eval_best_of_k <= 1:
+                                recons = twostage_model.predict(in_3d, deterministic=True)
+                            else:
+                                all_recons: List[torch.Tensor] = []
+                                all_errors: List[torch.Tensor] = []
+                                for sample_idx in range(twostage_eval_best_of_k):
+                                    sample_seed = int(batch_idx * 1000003 + sample_idx)
+                                    sampled_recons = twostage_model.predict(
+                                        in_3d,
+                                        deterministic=False,
+                                        seed=sample_seed,
+                                    )
+                                    sampled_error = torch.norm(sampled_recons - tgt_3d, dim=-1).mean(dim=(1, 2))
+                                    all_recons.append(sampled_recons)
+                                    all_errors.append(sampled_error)
+                                    if collect_twostage_tries and per_try_loss is not None and per_try_loss_norm is not None:
+                                        mpjpe_terms_try = torch.norm(sampled_recons - tgt_3d, dim=-1)
+                                        per_sample_mpjpe_try = mpjpe_terms_try.mean(dim=(1, 2))
+                                        per_sample_mpjpe_norm_try = per_sample_mpjpe_try * norm_factor_t
+                                        per_try_loss[sample_idx] += float(per_sample_mpjpe_try.sum().item())
+                                        per_try_loss_norm[sample_idx] += float(per_sample_mpjpe_norm_try.sum().item())
+                                if not all_recons:
+                                    raise RuntimeError("Failed to generate diffusion samples during evaluation.")
+                                stacked_recons = torch.stack(all_recons, dim=0)  # (K, B, T_out, N, 3)
+                                stacked_errors = torch.stack(all_errors, dim=0)  # (K, B)
+                                best_idx = torch.argmin(stacked_errors, dim=0)    # (B,)
+                                batch_selector = torch.arange(stacked_recons.size(1), device=stacked_recons.device)
+                                recons = stacked_recons[best_idx, batch_selector]  # (B, T_out, N, 3)
                     elif model == "simlpe_wave":
                         recons = simlpe_wave(in_3d)
                     elif model == "physmamba":
@@ -1014,13 +1124,19 @@ def train(
             torch.save(merged_pred, os.path.join(examples_dir, f"{model}_pred.pt"))
             torch.save(merged_tgt, os.path.join(examples_dir, f"{model}_target.pt"))
 
-        return {
+        metrics = {
             "mpjpe": float(avg_loss),
             "mpjpe_norm": float(avg_loss_norm),
             "weighted_mae": float(avg_score),
             "velocity_mae": float(avg_velocity_mae),
             "samples": float(total_samples),
         }
+        if collect_twostage_tries and per_try_loss is not None and per_try_loss_norm is not None:
+            per_try_mpjpe = [val / max(1, total_samples) for val in per_try_loss]
+            per_try_mpjpe_norm = [val / max(1, total_samples) for val in per_try_loss_norm]
+            metrics["mpjpe_by_try"] = per_try_mpjpe
+            metrics["mpjpe_norm_by_try"] = per_try_mpjpe_norm
+        return metrics
 
     # Optional LR scheduler that reduces LR on plateau of the monitored loss
     use_lr_scheduler = bool(config.get("use_lr_scheduler", True))
@@ -1051,6 +1167,7 @@ def train(
     best_test_mpjpe_norm = None
     best_test_epoch = None
     best_test_state: Optional[Dict[str, Dict[str, torch.Tensor]]] = None
+    last_state: Optional[Dict[str, Dict[str, torch.Tensor]]] = None
     best_test_velocity_mae = None
 
     best_train_mpjpe = None
@@ -1070,6 +1187,8 @@ def train(
     for epoch in range(1, total_epochs + 1):
         if model == "twostage_dct_diffusion" and twostage_phase == "coarse":
             if twostage_diffusion_epochs > 0 and epoch == train_epochs + 1:
+                if maybe_save_coarse_model is not None:
+                    maybe_save_coarse_model()
                 params = _set_twostage_phase("diffusion")
                 optimizer = torch.optim.Adam(params, lr=learning_rate * 0.1)
                 if use_lr_scheduler:
@@ -1438,6 +1557,8 @@ def train(
             if scheduler is not None:
                 scheduler.step(float(epoch_loss))
 
+    last_state = _capture_state()
+
     if mask_logging_enabled and mask_epoch_history:
         mask_matrix = torch.stack(mask_epoch_history, dim=0)
         torch.save(mask_matrix, mask_save_path)
@@ -1446,6 +1567,8 @@ def train(
         torch.save(gate_matrix, gate_save_path)
     if gate_param_logging_enabled and gate_param_snapshot is not None:
         torch.save(gate_param_snapshot, gate_param_save_path)
+    if maybe_save_coarse_model is not None:
+        maybe_save_coarse_model()
 
     val_metrics_best = None
     if val_loader is not None:
@@ -1491,6 +1614,21 @@ def train(
                 best_model_path,
             )
             print(f"Saved best model checkpoint to {best_model_path}")
+        elif model == "twostage_dct_diffusion" and last_state is not None:
+            os.makedirs(os.path.dirname(best_model_path), exist_ok=True)
+            torch.save(
+                {
+                    "best_model_state": last_state,
+                    "metadata": {
+                        "tag": config.get("best_model_tag"),
+                        "model": model,
+                        "dataset": config.get("dataset"),
+                        "note": "last_state_after_diffusion",
+                    },
+                },
+                best_model_path,
+            )
+            print(f"Saved last twostage checkpoint to {best_model_path}")
         else:
             print(f"Best model checkpoint was requested but no best state was captured for {best_model_path}")
 
@@ -1502,6 +1640,12 @@ def train(
         "train_mpjpe_norm_best": float(best_train_mpjpe_norm) if best_train_mpjpe_norm is not None else None,
         "validation_mpjpe_best": val_mpjpe_best if val_loader is not None else None,
         "validation_mpjpe_norm_best": val_mpjpe_norm_best if val_loader is not None else None,
+        "validation_mpjpe_by_try": (
+            val_metrics_best.get("mpjpe_by_try") if val_metrics_best is not None else None
+        ),
+        "validation_mpjpe_norm_by_try": (
+            val_metrics_best.get("mpjpe_norm_by_try") if val_metrics_best is not None else None
+        ),
         "test_mpjpe_best": best_test_mpjpe if test_loader is not None else None,
         "test_mpjpe_norm_best": best_test_mpjpe_norm if test_loader is not None else None,
         "params": params_count,

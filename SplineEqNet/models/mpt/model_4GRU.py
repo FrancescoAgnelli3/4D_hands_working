@@ -7,7 +7,7 @@ from typing import List, Optional, Sequence, Tuple
 class Graph:
     def __init__(
         self,
-        node_num: int = 42,
+        node_num: int = 21,
         adjacency: Optional[torch.Tensor] = None,
         edge_index: Optional[Sequence[Sequence[int]]] = None,
     ):
