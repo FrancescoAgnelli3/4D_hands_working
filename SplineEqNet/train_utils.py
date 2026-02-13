@@ -7,6 +7,7 @@ from typing import Optional, Dict, List, Tuple, Any
 import torch
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tqdm import tqdm
 
 __all__ = ["train"]
 
@@ -14,7 +15,7 @@ __all__ = ["train"]
 from models.mpt import model_4GRU
 from models.simlpe import SiMLPeConfig, SiMLPeForecaster
 from models.simlpe_dct import SiMLPeDCTConfig, SiMLPeDCTForecaster
-from models.two_stage_dct_diffusion import TwoStageDCTDiffusionConfig, TwoStageDCTDiffusionForecaster
+from models.two_stage_dct_diffusion import TwoStageDCTDiffusionConfig, TwoStageDCTDiffusionForecaster, _build_dct_matrix
 from models.simlpe_wave import SiMLPeWaveletConfig, SiMLPeWaveletForecaster
 from models.SFgDNet import SFgDNetConfig, SFgDNetForecaster
 from models.SplineEqNet import SplineEqNetConfig, SplineEqNetForecaster
@@ -626,16 +627,25 @@ def train(
 
     elif model == "twostage_dct_diffusion":
         # Two-stage: coarse low-band DCT predictor + conditional diffusion over high bands.
-        k_low = int(config.get("twostage_k_low", 16))
+        k_low_coarse = int(config.get("twostage_k_low_coarse", config.get("twostage_k_low", 16)))
+        k_low_diffusion = int(config.get("twostage_k_low_diffusion", config.get("twostage_k_low", 16)))
         diff_steps = int(config.get("twostage_diffusion_steps", 100))
         ddim_steps = int(config.get("twostage_ddim_steps", 50))
+        beta_schedule = str(config.get("twostage_beta_schedule", "cosine"))
         d_model = int(config.get("twostage_denoiser_dim", 256))
         depth = int(config.get("twostage_denoiser_depth", 6))
         n_heads = int(config.get("twostage_denoiser_heads", 8))
         p_drop = float(config.get("twostage_dropout", 0.0))
         freeze_coarse = bool(config.get("twostage_freeze_coarse", True))
+        stopgrad_coarse_condition = bool(config.get("twostage_stopgrad_coarse_condition", True))
+        diffusion_conditioning = str(config.get("twostage_diffusion_conditioning", "both"))
         residual_ema_decay = float(config.get("twostage_residual_ema_decay", 0.99))
         residual_rms_eps = float(config.get("twostage_residual_rms_eps", 1e-6))
+        residual_ema_warmup_steps = int(config.get("twostage_residual_ema_warmup_steps", 10))
+        x0_clip = float(config.get("twostage_x0_clip", 5.0))
+        snr_weighting = str(config.get("twostage_snr_weighting", "min_snr"))
+        min_snr_gamma = float(config.get("twostage_min_snr_gamma", 10.0))
+        t_min_frac = float(config.get("twostage_t_min_frac", 0.0))
 
         tw_cfg = TwoStageDCTDiffusionConfig(
             input_length=input_n,
@@ -643,16 +653,25 @@ def train(
             num_nodes=node_num,
             hidden_dim=hidden_size,
             num_layers=gru_layers,
-            k_low=k_low,
+            k_low_coarse=k_low_coarse,
+            k_low_diffusion=k_low_diffusion,
             diffusion_steps=diff_steps,
             ddim_steps=ddim_steps,
+            beta_schedule=beta_schedule,
             denoiser_dim=d_model,
             denoiser_depth=depth,
             denoiser_heads=n_heads,
             dropout=p_drop,
             freeze_coarse=freeze_coarse,
+            stopgrad_coarse_condition=stopgrad_coarse_condition,
+            diffusion_conditioning=diffusion_conditioning,
             residual_ema_decay=residual_ema_decay,
             residual_rms_eps=residual_rms_eps,
+            residual_ema_warmup_steps=residual_ema_warmup_steps,
+            x0_clip=x0_clip,
+            snr_weighting=snr_weighting,
+            min_snr_gamma=min_snr_gamma,
+            t_min_frac=t_min_frac,
             simlpe_use_norm=bool(config.get("simlpe_use_norm", True)),
             simlpe_spatial_fc_only=bool(config.get("simlpe_spatial_fc_only", False)),
             simlpe_mix_spatial_temporal=bool(config.get("simlpe_mix_spatial_temporal", False)),
@@ -929,6 +948,7 @@ def train(
         total_loss_norm = 0.0
         total_score = 0.0
         total_velocity_mae = 0.0
+        total_residual_mpjpe = 0.0
         total_samples = 0
         collect_for_saving = bool(collect_examples and save_examples)
         collected_preds: List[torch.Tensor] = []
@@ -948,7 +968,13 @@ def train(
         _set_mode(False)
         try:
             with torch.no_grad():
-                for batch_idx, batch in enumerate(eval_loader):
+                use_progress = (
+                    model == "twostage_dct_diffusion"
+                    and twostage_phase != "coarse"
+                    and twostage_eval_best_of_k > 1
+                )
+                eval_iter = tqdm(eval_loader, desc="Eval (k>1)", leave=False) if use_progress else eval_loader
+                for batch_idx, batch in enumerate(eval_iter):
                     if isinstance(batch, (list, tuple)):
                         if len(batch) < 2:
                             raise ValueError("Loader batch must provide input and target tensors.")
@@ -974,6 +1000,7 @@ def train(
                     in_ang_z = in_angle[:, :, :, 2].permute(0, 2, 1).contiguous()
                     B, T_out, N = tgt_3d.shape[0], tgt_3d.shape[1], tgt_3d.shape[2]
 
+                    coarse_pred = None
                     if model == "mpt":
                         out_v, _ = gen_v(in_vel, hidden_size)
                         out_x, _ = gen_x(in_ang_x, hidden_size)
@@ -1004,6 +1031,7 @@ def train(
                         if twostage_phase == "coarse":
                             recons = twostage_model.coarse(in_3d)
                         else:
+                            coarse_pred = twostage_model.coarse(in_3d)
                             if twostage_eval_best_of_k <= 1:
                                 recons = twostage_model.predict(in_3d, deterministic=True)
                             else:
@@ -1028,10 +1056,16 @@ def train(
                                 if not all_recons:
                                     raise RuntimeError("Failed to generate diffusion samples during evaluation.")
                                 stacked_recons = torch.stack(all_recons, dim=0)  # (K, B, T_out, N, 3)
-                                stacked_score = torch.stack(all_scores, dim=0)  # (K, B)
-                                best_idx = torch.argmin(stacked_score, dim=0)    # (B,)
+                                # stacked_score = torch.stack(all_scores, dim=0)  # (K, B)
+                                # best_idx = torch.argmin(stacked_score, dim=0)    # (B,)
+                                # choose the best idx prediction confronting with gt
+                                mpjpe_per_k = torch.norm(stacked_recons - tgt_3d.unsqueeze(0), dim=-1)
+                                mpjpe_per_k = mpjpe_per_k.mean(dim=(2, 3))  # (K, B)
+                                best_idx = torch.argmin(mpjpe_per_k, dim=0)  # (B,)
                                 batch_selector = torch.arange(stacked_recons.size(1), device=stacked_recons.device)
                                 recons = stacked_recons[best_idx, batch_selector]  # (B, T_out, N, 3)
+                                ## return the average of the predictions
+                                # recons = stacked_recons.mean(dim=0)
                     elif model == "simlpe_wave":
                         recons = simlpe_wave(in_3d)
                     elif model == "physmamba":
@@ -1088,6 +1122,14 @@ def train(
 
                     total_loss += float(per_sample_mpjpe.sum().item())
                     total_loss_norm += float(per_sample_mpjpe_norm.sum().item())
+                    if (
+                        model == "twostage_dct_diffusion"
+                        and twostage_phase != "coarse"
+                        and coarse_pred is not None
+                    ):
+                        residual_terms = torch.norm(recons - coarse_pred, dim=-1)
+                        residual_per_sample = residual_terms.mean(dim=(1, 2))
+                        total_residual_mpjpe += float(residual_per_sample.sum().item())
                     last_pose_eval = in_3d[:, -1, :, :]
                     pred_vel_mag_eval = _velocity_magnitude(recons, last_pose_eval)
                     vel_mae_eval = (pred_vel_mag_eval - tgt_vel).abs().mean(dim=(1, 2))
@@ -1115,6 +1157,11 @@ def train(
         avg_loss_norm = total_loss_norm / total_samples
         avg_score = total_score / max(1, total_samples)
         avg_velocity_mae = total_velocity_mae / max(1, total_samples)
+        avg_residual_mpjpe = (
+            total_residual_mpjpe / total_samples
+            if model == "twostage_dct_diffusion" and twostage_phase != "coarse"
+            else float("nan")
+        )
 
         if collect_for_saving and collected_preds and collected_tgts:
             examples_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "examples")
@@ -1129,6 +1176,7 @@ def train(
             "mpjpe_norm": float(avg_loss_norm),
             "weighted_mae": float(avg_score),
             "velocity_mae": float(avg_velocity_mae),
+            "residual_mpjpe": float(avg_residual_mpjpe),
             "samples": float(total_samples),
         }
         if collect_twostage_tries and per_try_loss is not None and per_try_loss_norm is not None:
@@ -1183,6 +1231,15 @@ def train(
     total_epochs = train_epochs
     if model == "twostage_dct_diffusion":
         total_epochs = train_epochs + max(0, twostage_diffusion_epochs)
+    coarse_err_dct = None
+    coarse_err_band_edges: Optional[Tuple[int, int]] = None
+    if model == "twostage_dct_diffusion":
+        dct_out = _build_dct_matrix(output_n).to(device=device)
+        low_edge = max(1, output_n // 3)
+        mid_edge = max(low_edge + 1, (2 * output_n) // 3)
+        mid_edge = min(output_n, mid_edge)
+        coarse_err_dct = dct_out
+        coarse_err_band_edges = (low_edge, mid_edge)
 
     for epoch in range(1, total_epochs + 1):
         if model == "twostage_dct_diffusion" and twostage_phase == "coarse":
@@ -1213,6 +1270,9 @@ def train(
         epoch_masks: List[torch.Tensor] = [] if mask_logging_enabled else []
         epoch_gate_slow: List[torch.Tensor] = [] if gate_logging_enabled else []
         epoch_gate_fast: List[torch.Tensor] = [] if gate_logging_enabled else []
+        coarse_err_low = 0.0
+        coarse_err_mid = 0.0
+        coarse_err_high = 0.0
 
         for it, batch in enumerate(loader):
             if isinstance(batch, (list, tuple)):
@@ -1384,6 +1444,22 @@ def train(
                 if mask_tensor is not None:
                     epoch_masks.append(mask_tensor.view(-1).detach().cpu())
 
+            if (
+                model == "twostage_dct_diffusion"
+                and twostage_phase == "coarse"
+                and coarse_err_dct is not None
+                and coarse_err_band_edges is not None
+            ):
+                with torch.no_grad():
+                    residual = (tgt_3d - recons).reshape(B, T_out, -1)
+                    dct_out = coarse_err_dct.to(device=residual.device, dtype=residual.dtype)
+                    coeffs = torch.einsum("ij,bjf->bif", dct_out, residual)
+                    energy_per_freq = coeffs.pow(2).sum(dim=(0, 2))
+                    low_edge, mid_edge = coarse_err_band_edges
+                    coarse_err_low += float(energy_per_freq[:low_edge].sum().item())
+                    coarse_err_mid += float(energy_per_freq[low_edge:mid_edge].sum().item())
+                    coarse_err_high += float(energy_per_freq[mid_edge:].sum().item())
+
             # Loss: MPJPE + bone length regularization
 
             # Base supervised loss (MPJPE).
@@ -1482,6 +1558,20 @@ def train(
             f"mpjpe_norm={mpjpe_norm_avg:.6f}{vel_clause}"
             f"| score(mae-wj)={score_avg:.6f} | time={dt:.1f}s | lr={optimizer.param_groups[0]['lr'] if optimizer is not None else 'n/a'}"
         )
+        if model == "twostage_dct_diffusion" and twostage_phase == "coarse" and coarse_err_band_edges is not None:
+            total_energy = coarse_err_low + coarse_err_mid + coarse_err_high
+            if total_energy > 0.0:
+                low_edge, mid_edge = coarse_err_band_edges
+                low_pct = 100.0 * coarse_err_low / total_energy
+                mid_pct = 100.0 * coarse_err_mid / total_energy
+                high_pct = 100.0 * coarse_err_high / total_energy
+                dominant = "low" if low_pct >= mid_pct and low_pct >= high_pct else ("mid" if mid_pct >= high_pct else "high")
+                print(
+                    f"[Epoch {epoch:03d}] coarse_err_energy_dct: "
+                    f"low={low_pct:.1f}% mid={mid_pct:.1f}% high={high_pct:.1f}% "
+                    f"(bins: 0-{low_edge-1}, {low_edge}-{mid_edge-1}, {mid_edge}-{output_n-1}) "
+                    f"dominant={dominant}"
+                )
 
         if best_train_mpjpe is None or mpjpe_avg < best_train_mpjpe:
             best_train_mpjpe = mpjpe_avg
@@ -1584,12 +1674,16 @@ def train(
         val_mpjpe_norm_best = float(val_metrics_best["mpjpe_norm"])
         val_weighted_mae_best = float(val_metrics_best["weighted_mae"])
         val_velocity_mae_best = float(val_metrics_best.get("velocity_mae", float("nan")))
+        val_residual_mpjpe_best = float(val_metrics_best.get("residual_mpjpe", float("nan")))
         val_samples = int(val_metrics_best["samples"])
         ref_epoch = best_test_epoch if best_test_epoch is not None else "final"
+        residual_msg = ""
+        if model == "twostage_dct_diffusion" and twostage_phase != "coarse":
+            residual_msg = f" | residual_mpjpe={val_residual_mpjpe_best:.6f}"
         print(
             f"[Validation @ epoch {ref_epoch}] mpjpe={val_mpjpe_best:.6f} | "
             f"mpjpe_norm={val_mpjpe_norm_best:.6f} | "
-            f"score(mae-wj)={val_weighted_mae_best:.6f} | vel_mae={val_velocity_mae_best:.6f} | samples={val_samples}"
+            f"score(mae-wj)={val_weighted_mae_best:.6f} | vel_mae={val_velocity_mae_best:.6f}{residual_msg} | samples={val_samples}"
         )
     else:
         val_mpjpe_best = None

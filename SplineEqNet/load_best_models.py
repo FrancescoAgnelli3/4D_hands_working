@@ -57,8 +57,13 @@ def main() -> None:
     ap.add_argument(
         "--diffusion-best-of-k",
         type=int,
-        default=8,
+        default=100,
         help="For twostage diffusion evaluation, sample k stochastic predictions and keep the best one per sample.",
+    )
+    ap.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="For twostage diffusion, force deterministic sampling (best-of-k is set to 1).",
     )
     ap.add_argument("--window", type=int, default=None, help="Optional override for the input window length (input_n).")
     ap.add_argument("--horizon", type=int, default=None, help="Optional override for the prediction horizon length (output_n).")
@@ -89,6 +94,8 @@ def main() -> None:
     _ensure_dir(args.checkpoint_root)
 
     any_failed = False
+    if args.deterministic and args.diffusion_best_of_k != 1:
+        print("[Info] --deterministic enabled: overriding --diffusion-best-of-k to 1.")
     for model_name in model_names:
         try:
             best_cfg = _load_best_config(best_json_path, model_name)
@@ -131,9 +138,8 @@ def main() -> None:
                 raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
 
             model_name_clean = model_name.strip().lower()
-            collect_twostage_tries = (
-                model_name_clean == "twostage_dct_diffusion" and int(args.diffusion_best_of_k) > 1
-            )
+            effective_best_of_k = 1 if args.deterministic else max(1, int(args.diffusion_best_of_k))
+            collect_twostage_tries = model_name_clean == "twostage_dct_diffusion" and effective_best_of_k > 1
             metrics = run_experiment(
                 ds=ds_cfg,
                 train_cfg=train_cfg,
@@ -144,7 +150,7 @@ def main() -> None:
                 log_wandb=False,
                 load_model_path=checkpoint_path,
                 twostage_eval_phase="diffusion",
-                twostage_eval_best_of_k=max(1, int(args.diffusion_best_of_k)),
+                twostage_eval_best_of_k=effective_best_of_k,
                 twostage_eval_collect_all=collect_twostage_tries,
             )
             if metrics is None:

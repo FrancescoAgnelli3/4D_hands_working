@@ -161,19 +161,28 @@ MODEL_DEFAULT_CONFIGS: Dict[str, Dict[str, object]] = {
         "gru_layers": 8,
         "gradient_clip": 10.0,
         "bone_loss_weight": 0.0,
-        "twostage_k_low": 20,
-        "twostage_diffusion_epochs": 180,
+        "twostage_k_low_coarse": 40,
+        "twostage_k_low_diffusion": 6,
+        "twostage_diffusion_epochs": 10,
         "twostage_diffusion_steps": 100,
         "twostage_ddim_steps": 50,
+        "twostage_beta_schedule": "cosine",
         "twostage_denoiser_dim": 256,
         "twostage_denoiser_depth": 6,
         "twostage_denoiser_heads": 8,
         "twostage_dropout": 0.0,
         "twostage_freeze_coarse": True,
+        "twostage_stopgrad_coarse_condition": True,
+        "twostage_diffusion_conditioning": "both",
         "twostage_residual_ema_decay": 0.99,
         "twostage_residual_rms_eps": 1e-6,
+        "twostage_residual_ema_warmup_steps": 10,
+        "twostage_x0_clip": 5.0,
+        "twostage_snr_weighting": "min_snr",
+        "twostage_min_snr_gamma": 10.0,
+        "twostage_t_min_frac": 0.0,
         "twostage_mpjpe_weight": 0.0,
-        "epochs": 50,
+        "epochs": 100,
     },
     "physmamba": {
         "model": "physmamba",
@@ -365,14 +374,25 @@ class TrainCfg:
     simlpe_wave_use_norm: Optional[bool] = None
     simlpe_wave_add_last_offset: Optional[bool] = None
     twostage_diffusion_epochs: Optional[int] = None
-    twostage_k_low: Optional[int] = None
+    twostage_k_low_coarse: Optional[int] = None
+    twostage_k_low_diffusion: Optional[int] = None
     twostage_diffusion_steps: Optional[int] = None
     twostage_ddim_steps: Optional[int] = None
+    twostage_beta_schedule: Optional[str] = None
     twostage_denoiser_dim: Optional[int] = None
     twostage_denoiser_depth: Optional[int] = None
     twostage_denoiser_heads: Optional[int] = None
     twostage_dropout: Optional[float] = None
     twostage_freeze_coarse: Optional[bool] = None
+    twostage_stopgrad_coarse_condition: Optional[bool] = None
+    twostage_diffusion_conditioning: Optional[str] = None
+    twostage_residual_ema_decay: Optional[float] = None
+    twostage_residual_rms_eps: Optional[float] = None
+    twostage_residual_ema_warmup_steps: Optional[int] = None
+    twostage_x0_clip: Optional[float] = None
+    twostage_snr_weighting: Optional[str] = None
+    twostage_min_snr_gamma: Optional[float] = None
+    twostage_t_min_frac: Optional[float] = None
     twostage_mpjpe_weight: Optional[float] = None
     simlpe_mask_temperature: Optional[float] = None
     simlpe_slow_layers: Optional[int] = None

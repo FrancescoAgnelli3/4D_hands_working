@@ -196,14 +196,31 @@ def _build_train_cfg(best_cfg: Dict[str, object], *, model_name: Optional[str] =
     cfg.simlpe_wave_use_norm = _coerce_optional(best_cfg.get("simlpe_wave_use_norm"), bool)
     cfg.simlpe_wave_add_last_offset = _coerce_optional(best_cfg.get("simlpe_wave_add_last_offset"), bool)
     cfg.twostage_diffusion_epochs = _coerce_optional(best_cfg.get("twostage_diffusion_epochs"), int)
-    cfg.twostage_k_low = _coerce_optional(best_cfg.get("twostage_k_low"), int)
+    cfg.twostage_k_low_coarse = _coerce_optional(
+        best_cfg.get("twostage_k_low_coarse", best_cfg.get("twostage_k_low")), int
+    )
+    cfg.twostage_k_low_diffusion = _coerce_optional(
+        best_cfg.get("twostage_k_low_diffusion", best_cfg.get("twostage_k_low")), int
+    )
     cfg.twostage_diffusion_steps = _coerce_optional(best_cfg.get("twostage_diffusion_steps"), int)
     cfg.twostage_ddim_steps = _coerce_optional(best_cfg.get("twostage_ddim_steps"), int)
+    cfg.twostage_beta_schedule = _coerce_optional(best_cfg.get("twostage_beta_schedule"), str)
     cfg.twostage_denoiser_dim = _coerce_optional(best_cfg.get("twostage_denoiser_dim"), int)
     cfg.twostage_denoiser_depth = _coerce_optional(best_cfg.get("twostage_denoiser_depth"), int)
     cfg.twostage_denoiser_heads = _coerce_optional(best_cfg.get("twostage_denoiser_heads"), int)
     cfg.twostage_dropout = _coerce_optional(best_cfg.get("twostage_dropout"), float)
     cfg.twostage_freeze_coarse = _coerce_optional(best_cfg.get("twostage_freeze_coarse"), bool)
+    cfg.twostage_stopgrad_coarse_condition = _coerce_optional(best_cfg.get("twostage_stopgrad_coarse_condition"), bool)
+    cfg.twostage_diffusion_conditioning = _coerce_optional(best_cfg.get("twostage_diffusion_conditioning"), str)
+    cfg.twostage_residual_ema_decay = _coerce_optional(best_cfg.get("twostage_residual_ema_decay"), float)
+    cfg.twostage_residual_rms_eps = _coerce_optional(best_cfg.get("twostage_residual_rms_eps"), float)
+    cfg.twostage_residual_ema_warmup_steps = _coerce_optional(
+        best_cfg.get("twostage_residual_ema_warmup_steps"), int
+    )
+    cfg.twostage_x0_clip = _coerce_optional(best_cfg.get("twostage_x0_clip"), float)
+    cfg.twostage_snr_weighting = _coerce_optional(best_cfg.get("twostage_snr_weighting"), str)
+    cfg.twostage_min_snr_gamma = _coerce_optional(best_cfg.get("twostage_min_snr_gamma"), float)
+    cfg.twostage_t_min_frac = _coerce_optional(best_cfg.get("twostage_t_min_frac"), float)
     cfg.twostage_mpjpe_weight = _coerce_optional(best_cfg.get("twostage_mpjpe_weight"), float)
     cfg.physmamba_dropout = _coerce_optional(best_cfg.get("physmamba_dropout"), float)
     cfg.physmamba_d_state = _coerce_optional(best_cfg.get("physmamba_d_state"), int)

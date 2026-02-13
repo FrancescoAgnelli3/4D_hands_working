@@ -110,12 +110,16 @@ def run_experiment(
         tag += f"__simwaveOffset={int(train_cfg.simlpe_wave_add_last_offset)}"
     if train_cfg.twostage_diffusion_epochs is not None:
         tag += f"__twepochs={int(train_cfg.twostage_diffusion_epochs)}"
-    if train_cfg.twostage_k_low is not None:
-        tag += f"__twk={int(train_cfg.twostage_k_low)}"
+    if train_cfg.twostage_k_low_coarse is not None:
+        tag += f"__twkc={int(train_cfg.twostage_k_low_coarse)}"
+    if train_cfg.twostage_k_low_diffusion is not None:
+        tag += f"__twkd={int(train_cfg.twostage_k_low_diffusion)}"
     if train_cfg.twostage_diffusion_steps is not None:
         tag += f"__twsteps={int(train_cfg.twostage_diffusion_steps)}"
     if train_cfg.twostage_ddim_steps is not None:
         tag += f"__twddim={int(train_cfg.twostage_ddim_steps)}"
+    if train_cfg.twostage_beta_schedule is not None:
+        tag += f"__twbeta={train_cfg.twostage_beta_schedule}"
     if train_cfg.twostage_denoiser_dim is not None:
         tag += f"__twdim={int(train_cfg.twostage_denoiser_dim)}"
     if train_cfg.twostage_denoiser_depth is not None:
@@ -126,6 +130,24 @@ def run_experiment(
         tag += f"__twdrop={float(train_cfg.twostage_dropout):g}"
     if train_cfg.twostage_freeze_coarse is not None:
         tag += f"__twfreeze={int(train_cfg.twostage_freeze_coarse)}"
+    if train_cfg.twostage_stopgrad_coarse_condition is not None:
+        tag += f"__twstopgrad={int(train_cfg.twostage_stopgrad_coarse_condition)}"
+    if train_cfg.twostage_diffusion_conditioning is not None:
+        tag += f"__twcond={train_cfg.twostage_diffusion_conditioning}"
+    if train_cfg.twostage_residual_ema_decay is not None:
+        tag += f"__twema={float(train_cfg.twostage_residual_ema_decay):g}"
+    if train_cfg.twostage_residual_rms_eps is not None:
+        tag += f"__twrms={float(train_cfg.twostage_residual_rms_eps):g}"
+    if train_cfg.twostage_residual_ema_warmup_steps is not None:
+        tag += f"__twemaWarm={int(train_cfg.twostage_residual_ema_warmup_steps)}"
+    if train_cfg.twostage_x0_clip is not None:
+        tag += f"__twclip={float(train_cfg.twostage_x0_clip):g}"
+    if train_cfg.twostage_snr_weighting is not None:
+        tag += f"__twsnr={train_cfg.twostage_snr_weighting}"
+    if train_cfg.twostage_min_snr_gamma is not None:
+        tag += f"__twgamma={float(train_cfg.twostage_min_snr_gamma):g}"
+    if train_cfg.twostage_t_min_frac is not None:
+        tag += f"__twtmin={float(train_cfg.twostage_t_min_frac):g}"
     if train_cfg.twostage_mpjpe_weight is not None:
         tag += f"__twmpjpe={float(train_cfg.twostage_mpjpe_weight):g}"
     if train_cfg.spectral_num_modes is not None:
@@ -269,12 +291,16 @@ def run_experiment(
         config["simlpe_wave_add_last_offset"] = bool(train_cfg.simlpe_wave_add_last_offset)
     if train_cfg.twostage_diffusion_epochs is not None:
         config["twostage_diffusion_epochs"] = int(train_cfg.twostage_diffusion_epochs)
-    if train_cfg.twostage_k_low is not None:
-        config["twostage_k_low"] = int(train_cfg.twostage_k_low)
+    if train_cfg.twostage_k_low_coarse is not None:
+        config["twostage_k_low_coarse"] = int(train_cfg.twostage_k_low_coarse)
+    if train_cfg.twostage_k_low_diffusion is not None:
+        config["twostage_k_low_diffusion"] = int(train_cfg.twostage_k_low_diffusion)
     if train_cfg.twostage_diffusion_steps is not None:
         config["twostage_diffusion_steps"] = int(train_cfg.twostage_diffusion_steps)
     if train_cfg.twostage_ddim_steps is not None:
         config["twostage_ddim_steps"] = int(train_cfg.twostage_ddim_steps)
+    if train_cfg.twostage_beta_schedule is not None:
+        config["twostage_beta_schedule"] = str(train_cfg.twostage_beta_schedule)
     if train_cfg.twostage_denoiser_dim is not None:
         config["twostage_denoiser_dim"] = int(train_cfg.twostage_denoiser_dim)
     if train_cfg.twostage_denoiser_depth is not None:
@@ -285,6 +311,24 @@ def run_experiment(
         config["twostage_dropout"] = float(train_cfg.twostage_dropout)
     if train_cfg.twostage_freeze_coarse is not None:
         config["twostage_freeze_coarse"] = bool(train_cfg.twostage_freeze_coarse)
+    if train_cfg.twostage_stopgrad_coarse_condition is not None:
+        config["twostage_stopgrad_coarse_condition"] = bool(train_cfg.twostage_stopgrad_coarse_condition)
+    if train_cfg.twostage_diffusion_conditioning is not None:
+        config["twostage_diffusion_conditioning"] = str(train_cfg.twostage_diffusion_conditioning)
+    if train_cfg.twostage_residual_ema_decay is not None:
+        config["twostage_residual_ema_decay"] = float(train_cfg.twostage_residual_ema_decay)
+    if train_cfg.twostage_residual_rms_eps is not None:
+        config["twostage_residual_rms_eps"] = float(train_cfg.twostage_residual_rms_eps)
+    if train_cfg.twostage_residual_ema_warmup_steps is not None:
+        config["twostage_residual_ema_warmup_steps"] = int(train_cfg.twostage_residual_ema_warmup_steps)
+    if train_cfg.twostage_x0_clip is not None:
+        config["twostage_x0_clip"] = float(train_cfg.twostage_x0_clip)
+    if train_cfg.twostage_snr_weighting is not None:
+        config["twostage_snr_weighting"] = str(train_cfg.twostage_snr_weighting)
+    if train_cfg.twostage_min_snr_gamma is not None:
+        config["twostage_min_snr_gamma"] = float(train_cfg.twostage_min_snr_gamma)
+    if train_cfg.twostage_t_min_frac is not None:
+        config["twostage_t_min_frac"] = float(train_cfg.twostage_t_min_frac)
     if train_cfg.twostage_mpjpe_weight is not None:
         config["twostage_mpjpe_weight"] = float(train_cfg.twostage_mpjpe_weight)
     if train_cfg.spectral_num_modes is not None:
