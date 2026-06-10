@@ -1,6 +1,6 @@
-# SplineEqNet: Slow–Fast Gated DCT for 3D Hand Motion Forecasting
+# SplineEQNet: Gated Frequency Equalization for 3D Hand Motion Forecasting
 
-This repository hosts the code accompanying the PRL submission *“SplineEQNet: Frequency-Equalized Deterministic Forecasting of 3D Hand Articulation”* The codebase contains every component needed to reproduce the ablations, retraining runs, qualitative analyses, and figure/table generation reported in the paper.
+This repository hosts the code accompanying the PR submission *“SplineEQNet: Gated Frequency Equalization for 3D Hand Motion Forecasting”* The codebase contains every component needed to reproduce the ablations, retraining runs, qualitative analyses, and figure/table generation reported in the paper.
 
 ![Architecture of SplineEqNet](model.png)
 
